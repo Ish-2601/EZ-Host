@@ -177,21 +177,26 @@ class Playit extends EventEmitter {
     if (tunnel && portOf(tunnel) !== port) {
       // Point the existing tunnel at this server's port instead of making another.
       await api(
-        '/v1/tunnels/config',
-        { tunnel_id: tunnel.id, new_agent_id: null, new_config: { fields: configFields(port) } },
+        '/tunnels/update',
+        { tunnel_id: tunnel.id, local_ip: '127.0.0.1', local_port: port, agent_id: data.agent_id, enabled: true },
         secret
       );
     }
     if (!tunnel && !data.pending.some(mine)) {
+      // playit's /v1/tunnels/create rejects agent-key requests ("failed to parse body"),
+      // so use the older endpoint, which accepts them.
       await api(
-        '/v1/tunnels/create',
+        '/tunnels/create',
         {
-          ports: { type: 'tunnel-type', details: 'minecraft-java' },
-          origin: { type: 'agent', data: { agent_id: data.agent_id, config: { fields: configFields(port) } } },
+          name: TUNNEL_NAME,
+          tunnel_type: 'minecraft-java',
+          port_type: 'tcp',
+          port_count: 1,
+          origin: { type: 'agent', data: { agent_id: data.agent_id, local_ip: '127.0.0.1', local_port: port } },
           enabled: true,
           alloc: null,
-          name: TUNNEL_NAME,
           firewall_id: null,
+          proxy_protocol: null,
         },
         secret
       );
@@ -257,13 +262,6 @@ class Playit extends EventEmitter {
     }
     if (this.isLinked()) this.setState({ ...this.state, state: 'stopped', message: '' });
   }
-}
-
-function configFields(port) {
-  return [
-    { name: 'local_ip', value: '127.0.0.1' },
-    { name: 'local_port', value: String(port) },
-  ];
 }
 
 module.exports = { Playit, PlayitError };
