@@ -111,6 +111,12 @@ function registerIpc() {
   handle('playit:retry', (id) => manager.startTunnel(id));
   handle('servers:players', (id) => manager.players(id));
   handle('servers:tunnel', (id) => manager.tunnelStatus(id));
+  handle('servers:pregen', (id) => manager.pregenStatus(id));
+  handle('servers:installChunky', (id) => manager.installChunky(id));
+  handle('servers:pregenStart', (id, radius) => manager.startPregen(id, radius));
+  handle('servers:pregenPause', (id) => manager.pausePregen(id));
+  handle('servers:pregenContinue', (id) => manager.continuePregen(id));
+  handle('servers:pregenCancel', (id) => manager.cancelPregen(id));
   handle('servers:newAddress', (id) => manager.newAddress(id));
   handle('servers:createVanilla', (opts) => manager.createVanilla(opts));
   handle('minecraft:versions', () => manager.listMinecraftVersions());
@@ -160,6 +166,7 @@ function registerIpc() {
   manager.on('playit', (state) => send('playit:status', state));
   manager.on('players', (id, players) => send('server:players', id, players));
   manager.on('tunnel', (id, state) => send('server:tunnel', id, state));
+  manager.on('pregen', (id, state) => send('server:pregen', id, state));
 }
 
 app.whenReady().then(() => {

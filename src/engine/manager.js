@@ -20,6 +20,7 @@ const launchers = require('./launchers');
 const clientPack = require('./client-pack');
 const { pruneClientOnlyMods } = require('./mod-metadata');
 const { Playit } = require('./playit');
+const { Rcon } = require('./rcon');
 
 const CONFIG_FILE = 'selfhost.json';
 
@@ -38,6 +39,8 @@ class ServerManager extends EventEmitter {
     this.installing = new Set();
     this.installLogs = new Map();
     this.tunnels = new Map();
+    this.rcons = new Map();
+    this.pregen = new Map();
     this.playit = new Playit(dataRoot);
     this.playit.on('status', (state) => this.emit('playit', state));
     this.playit.on('log', (line) => this.emit('playit-log', line));
@@ -425,10 +428,16 @@ class ServerManager extends EventEmitter {
       launch: config.launch,
       memoryMb: config.memoryMb,
     });
-    proc.on('line', (text, stream) => this.emit('console', id, { text, stream }));
+    proc.on('line', (text, stream) => {
+      this.emit('console', id, { text, stream });
+      this.trackPregen(id, text);
+    });
     proc.on('status', (status) => this.emit('status', id, status));
     proc.on('players', (players) => this.emit('players', id, players));
     proc.on('exit', () => {
+      this.closeRcon(id);
+      const pregen = this.pregen.get(id);
+      if (pregen && pregen.state === 'running') this.setPregen(id, { state: 'paused' });
       const tunnel = this.tunnels.get(id);
       if (tunnel) this.setTunnel(id, { ...tunnel, state: 'stopped', message: '' });
       // Stop the playit agent once no server is left running.
@@ -561,6 +570,143 @@ class ServerManager extends EventEmitter {
   players(id) {
     const proc = this.processes.get(id);
     return proc ? [...proc.players] : [];
+  }
+
+  // ---------- remote control (RCON) ----------
+
+  /** Run a command on a running server and return its output. */
+  async rcon(id, command) {
+    const proc = this.processes.get(id);
+    if (!proc || !proc.child) throw new Error('Start the server first');
+    if (proc.status !== 'running') throw new Error('Wait until the server has finished starting');
+    let client = this.rcons.get(id);
+    if (!client) {
+      const props = this.readProperties(id);
+      if (props['enable-rcon'] !== 'true') throw new Error('Restart the server once so the app can control it');
+      client = new Rcon({ port: Number(props['rcon.port']), password: props['rcon.password'] });
+      this.rcons.set(id, client);
+    }
+    try {
+      return await client.command(command);
+    } catch (err) {
+      client.close();
+      this.rcons.delete(id);
+      throw err;
+    }
+  }
+
+  closeRcon(id) {
+    const client = this.rcons.get(id);
+    if (client) client.close();
+    this.rcons.delete(id);
+  }
+
+  // ---------- pregeneration (Chunky) ----------
+
+  chunkyInstalled(id) {
+    const modsDir = path.join(this.serverDir(id), 'mods');
+    return fs.existsSync(modsDir) && fs.readdirSync(modsDir).some((f) => /^chunky.*\.jar$/i.test(f));
+  }
+
+  pregenStatus(id) {
+    const config = this.readConfig(id);
+    const supported = config.loader && config.loader !== 'vanilla';
+    return {
+      supported,
+      installed: supported && this.chunkyInstalled(id),
+      ...(this.pregen.get(id) || { state: 'idle' }),
+    };
+  }
+
+  setPregen(id, patch) {
+    const next = { ...(this.pregen.get(id) || { state: 'idle' }), ...patch };
+    this.pregen.set(id, next);
+    this.emit('pregen', id, this.pregenStatus(id));
+  }
+
+  /**
+   * Add a Modrinth mod (and any required mods that are missing) to a server.
+   * Used for Chunky; the server needs a restart to load it.
+   */
+  async installMod(id, slug) {
+    const config = this.readConfig(id);
+    if (!config.loader || config.loader === 'vanilla') throw new Error('Plain Minecraft servers cannot load mods');
+    const modsDir = path.join(this.serverDir(id), 'mods');
+    await fsp.mkdir(modsDir, { recursive: true });
+    const jars = await launchers.hashModJars(this.serverDir(id));
+    const have = await modrinth.projectIdsForHashes(jars.map((j) => j.sha1)).catch(() => new Set());
+    const queue = [slug];
+    const seen = new Set();
+    while (queue.length) {
+      const next = queue.shift();
+      if (seen.has(next)) continue;
+      seen.add(next);
+      const version = await modrinth.getCompatibleVersion(next, config.loader, config.minecraft);
+      if (!version) throw new Error(`${next} has no version for ${config.loader} ${config.minecraft}`);
+      if (have.has(version.projectId)) continue;
+      await download(version.file.url, path.join(modsDir, version.file.filename), {
+        hashes: { sha1: version.file.hashes.sha1 },
+      });
+      have.add(version.projectId);
+      this.emit('console', id, { text: `Added ${version.file.filename}`, stream: 'system' });
+      queue.push(...version.requiredProjects);
+    }
+  }
+
+  async installChunky(id) {
+    await this.installMod(id, 'chunky');
+    this.setPregen(id, { state: 'idle', needsRestart: Boolean(this.processes.get(id) && this.processes.get(id).child) });
+  }
+
+  /** Pregenerate a square of `radius` blocks around spawn in the overworld. */
+  async startPregen(id, radius) {
+    if (!this.chunkyInstalled(id)) throw new Error('Install the pregeneration tool first');
+    const r = Math.max(100, Math.min(20000, Math.round(Number(radius) || 1000)));
+    const out = [];
+    for (const cmd of ['chunky world minecraft:overworld', 'chunky spawn', 'chunky shape square', `chunky radius ${r}`, 'chunky start']) {
+      out.push(await this.rcon(id, cmd));
+    }
+    const last = out[out.length - 1] || '';
+    if (/unknown|incorrect/i.test(out.join('\n'))) {
+      throw new Error('The server did not accept the Chunky commands. Restart the server so Chunky loads.');
+    }
+    if (/already running/i.test(last)) await this.rcon(id, 'chunky continue');
+    this.setPregen(id, { state: 'running', radius: r, percent: 0, eta: null, rate: null, needsRestart: false });
+  }
+
+  async pausePregen(id) {
+    await this.rcon(id, 'chunky pause');
+    this.setPregen(id, { state: 'paused' });
+  }
+
+  async continuePregen(id) {
+    await this.rcon(id, 'chunky continue');
+    this.setPregen(id, { state: 'running' });
+  }
+
+  async cancelPregen(id) {
+    await this.rcon(id, 'chunky cancel');
+    await this.rcon(id, 'chunky confirm').catch(() => {});
+    this.setPregen(id, { state: 'idle', percent: 0 });
+  }
+
+  /** Chunky prints its progress to the console; turn that into status updates. */
+  trackPregen(id, line) {
+    if (!line.includes('Chunky') && !line.includes('Task ')) return;
+    const running = line.match(/Task running for (\S+?)\.? Processed: (\d+) chunks \(([\d.,]+)%\)(?:, ETA: ([\d:]+))?(?:, Rate: ([\d.,]+) cps)?/);
+    if (running) {
+      this.setPregen(id, {
+        state: 'running',
+        chunks: Number(running[2]),
+        percent: Number(running[3].replace(',', '.')),
+        eta: running[4] || null,
+        rate: running[5] ? Number(running[5].replace(',', '.')) : null,
+      });
+      return;
+    }
+    const finished = line.match(/Task finished for (\S+?)\.? Processed: (\d+) chunks/);
+    if (finished) this.setPregen(id, { state: 'done', percent: 100, chunks: Number(finished[2]), eta: null });
+    else if (/Task (stopped|paused) for/.test(line)) this.setPregen(id, { state: 'paused' });
   }
 
   async stop(id) {

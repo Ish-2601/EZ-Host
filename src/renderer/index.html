@@ -164,6 +164,7 @@
 
       <nav class="tabs">
         <button class="tab" data-tab="friends">Friends' setup</button>
+        <button class="tab" data-tab="world">World</button>
         <button class="tab" data-tab="console">Console</button>
         <button class="tab" data-tab="settings">Settings</button>
       </nav>
@@ -209,6 +210,14 @@
             <button id="check-btn" class="btn">Check</button>
           </div>
           <div id="check-result" class="check-result hidden"></div>
+        </div>
+      </div>
+
+      <div id="tab-world" class="tab-panel hidden">
+        <div class="card">
+          <h3>Pregenerate the world</h3>
+          <p class="muted">Creating new land is what makes modded servers lag when people explore. Pregenerating builds the area around spawn ahead of time, ideally while nobody is playing, so exploring later is smooth.</p>
+          <div id="pregen-box" class="pregen"></div>
         </div>
       </div>
 

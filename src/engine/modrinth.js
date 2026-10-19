@@ -105,4 +105,31 @@ async function findClientOnlyFiles(sha1Hashes) {
   return clientOnly;
 }
 
-module.exports = { searchModpacks, getProject, getModpackVersions, findClientOnlyFiles };
+/** Newest version of a mod that works with this loader and Minecraft version, or null. */
+async function getCompatibleVersion(idOrSlug, loader, minecraft) {
+  const params = new URLSearchParams({ loaders: JSON.stringify([loader]), game_versions: JSON.stringify([minecraft]) });
+  const versions = await getJson(`${API}/project/${encodeURIComponent(idOrSlug)}/version?${params}`);
+  const v = versions.find((x) => x.version_type === 'release') || versions[0];
+  if (!v) return null;
+  const file = v.files.find((f) => f.primary) || v.files[0];
+  return {
+    projectId: v.project_id,
+    versionNumber: v.version_number,
+    file: { url: file.url, filename: file.filename, hashes: file.hashes },
+    requiredProjects: (v.dependencies || []).filter((d) => d.dependency_type === 'required' && d.project_id).map((d) => d.project_id),
+  };
+}
+
+/** Modrinth project ids of the given jar hashes (sha1), for jars Modrinth knows. */
+async function projectIdsForHashes(sha1Hashes) {
+  if (!sha1Hashes.length) return new Set();
+  const { request } = require('./http');
+  const res = await request(`${API}/version_files`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hashes: sha1Hashes, algorithm: 'sha1' }),
+  });
+  return new Set(Object.values(await res.json()).map((v) => v.project_id));
+}
+
+module.exports = { searchModpacks, getProject, getModpackVersions, findClientOnlyFiles, getCompatibleVersion, projectIdsForHashes };

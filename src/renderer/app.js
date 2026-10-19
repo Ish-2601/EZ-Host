@@ -13,6 +13,7 @@ const state = {
   playit: { state: 'unlinked', linked: false },
   join: {}, // serverId -> joinInfo
   tunnels: {}, // serverId -> { state, address, message, resolveLink }
+  pregen: {}, // serverId -> pregeneration status
   menuFor: null, // server id the right-click menu is open for
 };
 
@@ -534,6 +535,97 @@ async function newAddress(s) {
   renderOnlineBox();
 }
 
+// ---------- world: pregeneration ----------
+
+const RADII = [
+  [500, 'Small (500 blocks around spawn)'],
+  [1000, 'Medium (1,000 blocks)'],
+  [2000, 'Large (2,000 blocks)'],
+  [3000, 'Very large (3,000 blocks)'],
+  [5000, 'Huge (5,000 blocks)'],
+];
+
+async function loadWorld() {
+  const id = state.selectedId;
+  state.pregen[id] = (await attempt(() => api.pregenStatus(id))) || {};
+  renderPregen();
+}
+
+/** replaceChildren that skips null/false entries. */
+function fill(node, ...children) {
+  node.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
+}
+
+function renderPregen() {
+  const s = current();
+  if (!s) return;
+  const p = state.pregen[s.id] || {};
+  const running = s.status === 'running';
+  const box = $('pregen-box');
+  const busy = (btn, fn) => async () => {
+    btn.disabled = true;
+    await attempt(fn);
+    btn.disabled = false;
+    loadWorld();
+  };
+
+  if (!s.installed) return fill(box, el('p', { class: 'muted' }, 'Available once the server has finished installing.'));
+  if (!p.supported) {
+    return fill(box, el('p', { class: 'muted' }, 'Pregenerating needs a mod loader, so it is not available on Plain Minecraft servers.'));
+  }
+  if (!p.installed) {
+    const btn = el('button', { class: 'btn btn-primary' }, 'Add the pregeneration tool');
+    btn.onclick = busy(btn, () => api.installChunky(s.id));
+    return fill(box, 
+      el('p', {}, 'This uses Chunky, a free server-side mod. Players do not need it.'),
+      el('div', {}, btn)
+    );
+  }
+  if (p.needsRestart && running) {
+    return fill(box, el('div', { class: 'notice' }, el('strong', {}, 'Restart the server to finish adding the tool'), el('p', {}, 'Stop the server and start it again, then come back here.')));
+  }
+
+  const percent = Math.max(0, Math.min(100, p.percent || 0));
+  const progress = el('div', {},
+    el('div', { class: 'progress' }, el('div', { class: 'progress-bar', style: null, 'data-w': percent })),
+    el('div', { class: 'pregen-stats' },
+      el('span', {}, `${percent.toFixed(1)}% done`),
+      p.chunks ? el('span', {}, `${p.chunks.toLocaleString()} chunks`) : null,
+      p.eta ? el('span', {}, `About ${p.eta} left`) : null,
+      p.rate ? el('span', {}, `${Math.round(p.rate)} chunks/second`) : null
+    )
+  );
+
+  if (p.state === 'running' || p.state === 'paused') {
+    const pause = el('button', { class: 'btn' }, p.state === 'running' ? 'Pause' : 'Continue');
+    pause.onclick = busy(pause, () => (p.state === 'running' ? api.pregenPause(s.id) : api.pregenContinue(s.id)));
+    const cancel = el('button', { class: 'btn btn-danger' }, 'Cancel');
+    cancel.onclick = busy(cancel, () => api.pregenCancel(s.id));
+    pause.disabled = cancel.disabled = !running;
+    fill(box, 
+      el('strong', {}, p.state === 'running' ? `Pregenerating ${p.radius ? `${p.radius.toLocaleString()} blocks around spawn` : ''}…` : 'Paused'),
+      progress,
+      el('div', { class: 'row' }, pause, cancel),
+      running ? null : el('p', { class: 'muted small' }, 'Start the server to continue.')
+    );
+  } else {
+    const select = el('select', { id: 'pregen-radius' }, RADII.map(([r, label]) => el('option', { value: r }, label)));
+    select.value = String(p.radius || 1000);
+    const start = el('button', { class: 'btn btn-primary' }, 'Start pregenerating');
+    start.disabled = !running;
+    start.onclick = busy(start, () => api.pregenStart(s.id, Number(select.value)));
+    fill(box, 
+      p.state === 'done' ? el('div', { class: 'ok' }, `✓ Finished: ${(p.chunks || 0).toLocaleString()} chunks are ready.`) : null,
+      el('div', { class: 'row' }, select, start),
+      el('p', { class: 'muted small' }, running
+        ? 'It keeps running while you play, but it is fastest when the server is empty. Bigger areas take longer: large can take an hour on modded servers.'
+        : 'Start the server first.')
+    );
+  }
+  // Inline styles are blocked by the page's security policy, so size the bar here.
+  box.querySelectorAll('.progress-bar[data-w]').forEach((b) => (b.style.width = `${b.dataset.w}%`));
+}
+
 // ---------- right-click menu and rename ----------
 
 function openMenu(event, id) {
@@ -593,7 +685,8 @@ async function deleteServer(s) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  for (const tab of ['friends', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
+  for (const tab of ['friends', 'world', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
+  if (name === 'world') loadWorld();
   if (name === 'settings') loadSettings();
   if (name === 'friends') loadFriends();
   if (name === 'console') $('console').scrollTop = $('console').scrollHeight;
@@ -827,7 +920,10 @@ function wire() {
     if (s) s.status = status;
     if (status === 'stopped') await refreshServers();
     renderServerList();
-    if (s && id === state.selectedId) renderServer(s);
+    if (s && id === state.selectedId) {
+      renderServer(s);
+      if (!$('tab-world').classList.contains('hidden')) loadWorld();
+    }
   });
   api.onPlayers((id, players) => {
     state.players[id] = players;
@@ -839,6 +935,10 @@ function wire() {
     state.playit = { ...p, linked: !['unlinked', 'linking'].includes(p.state) };
     renderPlayitPill();
     renderOnlineBox();
+  });
+  api.onPregen((id, p) => {
+    state.pregen[id] = p;
+    if (id === state.selectedId && !$('tab-world').classList.contains('hidden')) renderPregen();
   });
   api.onTunnel((id, t) => {
     state.tunnels[id] = t;

@@ -51,6 +51,13 @@ contextBridge.exposeInMainWorld('api', {
   minecraftVersions: invoke('minecraft:versions'),
   openExternal: invoke('system:openExternal'),
   onTunnel: subscribe('server:tunnel'),
+  pregenStatus: invoke('servers:pregen'),
+  installChunky: invoke('servers:installChunky'),
+  pregenStart: invoke('servers:pregenStart'),
+  pregenPause: invoke('servers:pregenPause'),
+  pregenContinue: invoke('servers:pregenContinue'),
+  pregenCancel: invoke('servers:pregenCancel'),
+  onPregen: subscribe('server:pregen'),
 
   onConsole: subscribe('server:console'),
   onStatus: subscribe('server:status'),
