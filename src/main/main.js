@@ -117,11 +117,12 @@ function registerIpc() {
   handle('whitelist:add', (id, name) => manager.whitelistAdd(id, name));
   handle('whitelist:remove', (id, name) => manager.whitelistRemove(id, name));
   handle('whitelist:enable', (id, on) => manager.setWhitelistEnabled(id, Boolean(on)));
+  handle('whitelist:deny', (id, name) => manager.denyJoiner(id, name));
   handle('settings:hostName', () => manager.hostName());
   handle('settings:setHostName', (name) => manager.setHostName(name));
   handle('map:dimensions', (id) => manager.mapDimensions(id));
   handle('map:regions', (id, dim) => manager.mapRegions(id, dim));
-  handle('map:tile', (id, dim, rx, rz) => manager.mapTile(id, dim, rx, rz));
+  handle('map:tile', (id, dim, rx, rz, mode) => manager.mapTile(id, dim, rx, rz, mode));
   handle('map:players', (id) => manager.playerPositions(id));
   handle('map:forceloaded', (id, dim) => manager.forceloaded(id, dim));
   handle('map:forceload', (id, dim, rect, add) => manager.forceload(id, dim, rect, add));

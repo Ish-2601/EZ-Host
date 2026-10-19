@@ -2,11 +2,11 @@
 const { parentPort } = require('worker_threads');
 const { renderRegion, encodePng } = require('./map-render');
 
-parentPort.on('message', ({ jobId, file }) => {
+parentPort.on('message', ({ jobId, file, mode }) => {
   try {
-    const { rgba, chunks } = renderRegion(file);
+    const { rgba, chunks, structures } = renderRegion(file, mode);
     const png = encodePng(rgba, 512, 512);
-    parentPort.postMessage({ jobId, png, chunks: Buffer.from(chunks) });
+    parentPort.postMessage({ jobId, png, chunks: Buffer.from(chunks), structures });
   } catch (err) {
     parentPort.postMessage({ jobId, error: err.message });
   }

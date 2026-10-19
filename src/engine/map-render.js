@@ -90,6 +90,58 @@ const KEYWORDS = [
   ['purpur', [169, 125, 169]],
 ];
 
+// Biome colors, close to the ones seed-map sites use.
+const BIOMES = {
+  ocean: [0, 0, 112], deep_ocean: [0, 0, 48], warm_ocean: [0, 0, 172], lukewarm_ocean: [0, 0, 144],
+  deep_lukewarm_ocean: [0, 0, 64], cold_ocean: [32, 32, 112], deep_cold_ocean: [32, 32, 56],
+  frozen_ocean: [112, 112, 214], deep_frozen_ocean: [64, 64, 144], river: [0, 0, 255], frozen_river: [160, 160, 255],
+  plains: [141, 179, 96], sunflower_plains: [181, 219, 136], snowy_plains: [255, 255, 255], ice_spikes: [180, 220, 220],
+  desert: [250, 148, 24], swamp: [7, 249, 178], mangrove_swamp: [44, 204, 142],
+  forest: [5, 102, 33], flower_forest: [45, 142, 73], birch_forest: [48, 116, 68], old_growth_birch_forest: [88, 156, 108],
+  dark_forest: [64, 81, 26], taiga: [11, 102, 89], snowy_taiga: [49, 85, 74], old_growth_pine_taiga: [89, 102, 81],
+  old_growth_spruce_taiga: [129, 142, 121], jungle: [83, 123, 9], sparse_jungle: [98, 139, 23], bamboo_jungle: [118, 142, 20],
+  savanna: [189, 178, 95], savanna_plateau: [167, 157, 100], windswept_savanna: [229, 218, 135],
+  badlands: [217, 69, 21], eroded_badlands: [255, 109, 61], wooded_badlands: [176, 151, 101],
+  windswept_hills: [96, 96, 96], windswept_gravelly_hills: [136, 136, 136], windswept_forest: [80, 112, 80],
+  meadow: [96, 164, 69], cherry_grove: [255, 145, 200], grove: [71, 114, 108], snowy_slopes: [196, 196, 196],
+  frozen_peaks: [160, 160, 160], jagged_peaks: [220, 220, 200], stony_peaks: [123, 143, 116],
+  beach: [250, 222, 85], snowy_beach: [250, 240, 192], stony_shore: [162, 162, 132], mushroom_fields: [255, 0, 255],
+  dripstone_caves: [134, 96, 67], lush_caves: [40, 120, 40], deep_dark: [10, 20, 30], pale_garden: [180, 190, 180],
+  nether_wastes: [191, 59, 59], soul_sand_valley: [94, 56, 48], crimson_forest: [221, 8, 8], warped_forest: [73, 144, 123],
+  basalt_deltas: [64, 54, 54], the_end: [128, 128, 255], end_highlands: [181, 181, 54], end_midlands: [255, 255, 128],
+  small_end_islands: [144, 144, 255], end_barrens: [112, 112, 204], the_void: [0, 0, 0],
+};
+const BIOME_KEYWORDS = [
+  ['deep', [0, 0, 64]], ['ocean', [0, 0, 112]], ['sea', [0, 0, 112]], ['river', [0, 0, 255]], ['beach', [250, 222, 85]],
+  ['desert', [250, 148, 24]], ['dune', [250, 148, 24]], ['badlands', [217, 69, 21]], ['mesa', [217, 69, 21]],
+  ['savanna', [189, 178, 95]], ['jungle', [83, 123, 9]], ['swamp', [7, 249, 178]], ['marsh', [7, 249, 178]],
+  ['bog', [7, 249, 178]], ['taiga', [11, 102, 89]], ['tundra', [196, 214, 214]], ['snow', [240, 240, 240]],
+  ['frozen', [200, 220, 240]], ['ice', [180, 220, 220]], ['glacier', [180, 220, 220]], ['mountain', [123, 143, 116]],
+  ['peak', [160, 160, 160]], ['alp', [160, 160, 160]], ['hill', [96, 120, 80]], ['highland', [110, 130, 90]],
+  ['forest', [5, 102, 33]], ['wood', [5, 102, 33]], ['grove', [71, 114, 108]], ['plain', [141, 179, 96]],
+  ['meadow', [96, 164, 69]], ['prairie', [160, 190, 100]], ['steppe', [170, 180, 110]], ['field', [141, 179, 96]],
+  ['shrub', [150, 160, 90]], ['cherry', [255, 145, 200]], ['mushroom', [255, 0, 255]], ['cave', [90, 90, 90]],
+  ['nether', [191, 59, 59]], ['crimson', [221, 8, 8]], ['warped', [73, 144, 123]], ['end', [128, 128, 255]],
+];
+const biomeCache = new Map();
+function biomeColor(name) {
+  let c = biomeCache.get(name);
+  if (c) return c;
+  const short = name.slice(name.indexOf(':') + 1);
+  c = BIOMES[short];
+  if (!c) {
+    const kw = BIOME_KEYWORDS.find(([k]) => short.includes(k));
+    c = kw ? kw[1] : null;
+  }
+  if (!c) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    c = [70 + (h & 127), 70 + ((h >> 7) & 127), 70 + ((h >> 14) & 127)];
+  }
+  biomeCache.set(name, c);
+  return c;
+}
+
 const colorCache = new Map();
 function blockColor(name) {
   let c = colorCache.get(name);
@@ -123,6 +175,54 @@ function unpack(longs, bits, count) {
     const long = longs[Math.floor(i / perLong)];
     if (long === undefined) break;
     out[i] = Number((BigInt.asUintN(64, long) >> BigInt((i % perLong) * bits)) & mask);
+  }
+  return out;
+}
+
+/** Structures that start in this chunk: [{ id, cx, cz }]. */
+function chunkStructures(root) {
+  const c = root.value;
+  const starts = child(child(c, 'structures'), 'starts') || child(child(c, 'Structures'), 'Starts');
+  if (!starts) return [];
+  const out = [];
+  for (const [key, node] of Object.entries(starts)) {
+    const v = node.value;
+    const id = child(v, 'id') || key;
+    if (id === 'INVALID') continue;
+    out.push({ id: key, cx: child(v, 'ChunkX') ?? child(c, 'xPos'), cz: child(v, 'ChunkZ') ?? child(c, 'zPos') });
+  }
+  return out;
+}
+
+/** Biome name for each of the 16 4x4 columns of a chunk, near the surface (or sea level). */
+function chunkBiomes(root, ys) {
+  const c = root.value;
+  const sectionsTag = child(c, 'sections');
+  if (!sectionsTag) return null;
+  const sections = new Map();
+  for (const sec of sectionsTag.items) {
+    const biomes = child(sec, 'biomes');
+    const y = child(sec, 'Y');
+    if (!biomes || y === undefined) continue;
+    const palette = child(biomes, 'palette');
+    if (!palette) continue;
+    sections.set(y, { palette: palette.items, data: child(biomes, 'data') || null, decoded: null });
+  }
+  if (!sections.size) return null;
+  const out = new Array(16);
+  for (let q = 0; q < 16; q++) {
+    const qx = q & 3;
+    const qz = q >> 2;
+    const surface = ys ? ys[(qz * 4 + 1) * 16 + qx * 4 + 1] : 63;
+    const y = surface > -2000 ? surface : 63;
+    const sec = sections.get(Math.floor(y / 16)) || sections.get(3) || sections.values().next().value;
+    let idx = 0;
+    if (sec.palette.length > 1 && sec.data) {
+      if (!sec.decoded) sec.decoded = unpack(sec.data, Math.ceil(Math.log2(sec.palette.length)), 64);
+      const qy = (y & 15) >> 2;
+      idx = sec.decoded[(qy << 4) | (qz << 2) | qx];
+    }
+    out[q] = sec.palette[idx] || sec.palette[0];
   }
   return out;
 }
@@ -184,12 +284,13 @@ function chunkTop(root) {
  * Render a region file. Returns { rgba (512*512*4), chunks: Uint8Array(1024) }
  * where chunks[i] is 1 for every chunk that exists in the file.
  */
-function renderRegion(file) {
+function renderRegion(file, mode = 'terrain') {
   const buf = fs.readFileSync(file);
   const rgba = new Uint8ClampedArray(512 * 512 * 4);
   const chunks = new Uint8Array(1024);
+  const structures = [];
   const heightGrid = new Int16Array(512 * 512).fill(-32768);
-  if (buf.length < 8192) return { rgba, chunks };
+  if (buf.length < 8192) return { rgba, chunks, structures };
 
   for (let i = 0; i < 1024; i++) {
     const sector = buf.readUIntBE(i * 4, 3);
@@ -200,15 +301,33 @@ function renderRegion(file) {
     const len = buf.readUInt32BE(off);
     const comp = buf[off + 4];
     let top = null;
+    let biomes = null;
     try {
       const raw = buf.subarray(off + 5, off + 4 + len);
       const data = comp === 2 ? zlib.inflateSync(raw) : comp === 1 ? zlib.gunzipSync(raw) : comp === 3 ? raw : null;
-      if (data) top = chunkTop(readNbt(data));
+      if (data) {
+        const root = readNbt(data);
+        top = chunkTop(root);
+        structures.push(...chunkStructures(root));
+        if (mode === 'biomes') biomes = chunkBiomes(root, top && top.ys);
+      }
     } catch {
       top = null;
     }
     const cx = (i & 31) * 16;
     const cz = (i >> 5) * 16;
+    if (mode === 'biomes' && biomes) {
+      // Biome colors; heights (when known) still feed the relief shading below.
+      for (let b = 0; b < 256; b++) {
+        const px = cx + (b & 15);
+        const pz = cz + (b >> 4);
+        const p = (pz * 512 + px) * 4;
+        const [r, g, bl] = biomeColor(biomes[((b >> 6) << 2) | ((b & 15) >> 2)]);
+        rgba[p] = r; rgba[p + 1] = g; rgba[p + 2] = bl; rgba[p + 3] = 255;
+        if (top) heightGrid[pz * 512 + px] = top.ys[b];
+      }
+      continue;
+    }
     for (let b = 0; b < 256; b++) {
       const px = cx + (b & 15);
       const pz = cz + (b >> 4);
@@ -236,7 +355,7 @@ function renderRegion(file) {
       rgba[p] *= shade; rgba[p + 1] *= shade; rgba[p + 2] *= shade;
     }
   }
-  return { rgba, chunks };
+  return { rgba, chunks, structures };
 }
 
 // ---------- PNG encoding ----------
@@ -285,4 +404,4 @@ function encodePng(rgba, width, height) {
   ]);
 }
 
-module.exports = { renderRegion, encodePng, blockColor, T };
+module.exports = { renderRegion, encodePng, blockColor, biomeColor, T };

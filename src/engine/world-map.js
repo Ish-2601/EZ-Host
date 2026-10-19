@@ -81,41 +81,44 @@ class MapRenderer {
     return this.worker;
   }
 
-  render(file) {
+  render(file, mode) {
     return new Promise((resolve, reject) => {
       const jobId = this.nextJob++;
       this.jobs.set(jobId, { resolve, reject });
       const worker = this.ensureWorker();
       worker.ref();
-      worker.postMessage({ jobId, file });
+      worker.postMessage({ jobId, file, mode });
     });
   }
 
   /**
-   * One region tile as { png (data URL), chunks (base64 bitmap of 1024 chunks) },
-   * re-rendered only when the region file changed since the cached copy.
+   * One region tile as { png (data URL), chunks (base64 bitmap of 1024 chunks),
+   * structures }. `mode` is 'terrain' or 'biomes'. Re-rendered only when the
+   * region file changed since the cached copy.
    */
-  async tile(regionFile, cacheDir) {
-    const base = path.join(cacheDir, path.basename(regionFile, '.mca'));
+  async tile(regionFile, cacheDir, mode = 'terrain') {
+    const base = path.join(cacheDir, `${path.basename(regionFile, '.mca')}.${mode}`);
     const pngFile = `${base}.png`;
-    const chunkFile = `${base}.chunks`;
+    const metaFile = `${base}.json`;
+    const read = () => {
+      const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+      return { png: `data:image/png;base64,${fs.readFileSync(pngFile).toString('base64')}`, ...meta };
+    };
     const regionTime = fs.statSync(regionFile).mtimeMs;
-    if (fs.existsSync(pngFile) && fs.existsSync(chunkFile) && fs.statSync(pngFile).mtimeMs >= regionTime) {
-      return { png: `data:image/png;base64,${fs.readFileSync(pngFile).toString('base64')}`, chunks: fs.readFileSync(chunkFile).toString('base64') };
-    }
+    if (fs.existsSync(pngFile) && fs.existsSync(metaFile) && fs.statSync(pngFile).mtimeMs >= regionTime) return read();
     if (!this.inflight.has(pngFile)) {
       this.inflight.set(
         pngFile,
         (async () => {
-          const { png, chunks } = await this.render(regionFile);
+          const { png, chunks, structures } = await this.render(regionFile, mode);
           await fsp.mkdir(cacheDir, { recursive: true });
           await fsp.writeFile(pngFile, Buffer.from(png));
-          await fsp.writeFile(chunkFile, Buffer.from(chunks));
+          await fsp.writeFile(metaFile, JSON.stringify({ chunks: Buffer.from(chunks).toString('base64'), structures }));
         })().finally(() => this.inflight.delete(pngFile))
       );
     }
     await this.inflight.get(pngFile);
-    return { png: `data:image/png;base64,${fs.readFileSync(pngFile).toString('base64')}`, chunks: fs.readFileSync(chunkFile).toString('base64') };
+    return read();
   }
 }
 

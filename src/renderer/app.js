@@ -542,6 +542,29 @@ async function newAddress(s) {
 
 const headUrl = (uuid, size = 64) => `https://mc-heads.net/avatar/${uuid}/${size}`;
 
+/** A player head with a crown for OPs and a red dot for banned players. */
+function headEl(idOrName, size, { op = false, banned = false } = {}) {
+  const wrap = el('span', { class: 'head-wrap', title: op ? 'Operator (OP)' : banned ? 'Banned' : null });
+  wrap.append(el('img', { src: headUrl(idOrName, size), alt: '', width: size, height: size }));
+  if (op) wrap.append(crownSvg());
+  if (banned) wrap.append(el('span', { class: 'ban' }));
+  return wrap;
+}
+
+function crownSvg() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 16');
+  svg.setAttribute('class', 'crown');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M2 14 0 3l6 4 6-7 6 7 6-4-2 11Z');
+  path.setAttribute('fill', '#f5c518');
+  path.setAttribute('stroke', '#7a5a00');
+  path.setAttribute('stroke-width', '1.2');
+  svg.append(path);
+  return svg;
+}
+
 // ---------- whitelist ----------
 
 async function loadWhitelist() {
@@ -554,9 +577,10 @@ function renderWhitelist(wl) {
   const s = current();
   if (!s) return;
   $('wl-enabled').checked = wl.enabled;
+  $('wl-switch-label').textContent = wl.enabled ? 'Whitelist on' : 'Whitelist off';
   $('wl-help').textContent = wl.enabled
-    ? 'Only the players below can join. Anyone else is turned away, even if they have the address.'
-    : 'Anyone with the address can join. Turn the list on to choose who gets in.';
+    ? 'Only the players below can join. Anyone else is turned away and shows up under "Trying to join".'
+    : 'Anyone who has the server address can join. Turn the whitelist on to choose who gets in.';
   const remove = (name) => async () => {
     if (await attempt(async () => (await api.whitelistRemove(s.id, name), true))) loadWhitelist();
   };
@@ -568,11 +592,21 @@ function renderWhitelist(wl) {
       el('button', { type: 'button', title: `Remove ${p.name}`, onclick: remove(p.name) }, '×')
     ))
   );
-  const refused = wl.refused.filter((n) => !wl.players.some((p) => p.name.toLowerCase() === n.toLowerCase()));
-  $('wl-refused').classList.toggle('hidden', !refused.length);
+  const refused = wl.refused;
+  $('wl-refused').classList.toggle('hidden', !wl.enabled || !refused.length);
   fill($('wl-refused'),
-    el('span', {}, 'Tried to join but not on the list:'),
-    refused.map((name) => el('button', { class: 'btn btn-primary', type: 'button', onclick: () => addToWhitelist(name) }, `Allow ${name}`))
+    el('strong', {}, 'Trying to join'),
+    el('div', { class: 'join-requests' },
+      refused.map((name) => el('div', { class: 'join-request' },
+        el('img', { src: headUrl(name, 32), alt: '' }),
+        el('span', { class: 'who' }, name),
+        el('button', { class: 'btn btn-primary', type: 'button', onclick: () => addToWhitelist(name) }, 'Approve'),
+        el('button', { class: 'btn', type: 'button', onclick: async () => {
+          await attempt(() => api.whitelistDeny(s.id, name));
+          loadWhitelist();
+        } }, 'Deny')
+      ))
+    )
   );
 }
 
@@ -595,10 +629,14 @@ async function loadPlayers() {
   if (!list.some((p) => p.uuid === state.playerUuid)) state.playerUuid = list.length ? list[0].uuid : null;
   fill($('player-list'), list.length ? null : el('li', { class: 'muted' }, 'Nobody has joined yet.'),
     ...list.map((p) =>
-      el('li', { class: p.uuid === state.playerUuid ? 'active' : '', onclick: () => showPlayer(p.uuid) },
-        el('img', { src: headUrl(p.uuid, 32), alt: '' }),
+      el('li', {
+        class: p.uuid === state.playerUuid ? 'active' : '',
+        onclick: () => showPlayer(p.uuid),
+        oncontextmenu: (e) => openPlayerMenu(e, p),
+      },
+        headEl(p.uuid, 28, p),
         el('span', { class: 'pname' }, p.name || p.uuid.slice(0, 8)),
-        p.op ? el('span', { class: 'tag' }, 'OP') : null,
+        p.banned ? el('span', { class: 'tag' }, 'Banned') : null,
         el('span', { class: `dot ${p.online ? 'online' : ''}`, title: p.online ? 'Online' : 'Offline' })
       )
     )
@@ -738,8 +776,8 @@ async function showPlayer(uuid, { quiet = false } = {}) {
 
   const where = d.pos ? `${d.dimension.replace('minecraft:', '').replace('_', ' ')} at ${d.pos.map(Math.round).join(', ')}` : '';
   fill(box,
-    el('div', { class: 'player-head' },
-      el('img', { src: headUrl(d.uuid, 72), alt: '' }),
+    el('div', { class: 'player-head', oncontextmenu: (e) => openPlayerMenu(e, d) },
+      headEl(d.uuid, 72, d),
       el('div', {},
         el('h2', {}, d.name || d.uuid),
         el('div', { class: 'meta' }, online ? 'Online now · live data' : `Offline · from the save file${d.lastPlayed ? `, last saved ${new Date(d.lastPlayed).toLocaleString()}` : ''}`),
@@ -757,6 +795,80 @@ async function showPlayer(uuid, { quiet = false } = {}) {
       el('p', { class: 'muted small' }, 'Click an item to remove it.')
     )
   );
+}
+
+// ---------- player right-click menu ----------
+
+async function openPlayerMenu(event, player) {
+  event.preventDefault();
+  closeMenu();
+  const s = current();
+  if (!s) return;
+  if (state.host === undefined) state.host = ((await attempt(() => api.hostName())) || {}).name || null;
+  const running = s.status === 'running';
+  const online = running && player.online;
+  const host = state.host;
+  const hostOnline = online && host && host.toLowerCase() !== String(player.name).toLowerCase() &&
+    state.playerList.some((p) => p.online && p.name && p.name.toLowerCase() === host.toLowerCase());
+  const others = state.playerList.filter((p) => p.online && p.uuid !== player.uuid && p.name);
+  const name = player.name || 'this player';
+
+  const items = [];
+  const label = (text) => items.push(el('div', { class: 'menu-label' }, text));
+  const item = (text, action, args = {}, opts = {}) => {
+    const b = el('button', { role: 'menuitem', class: opts.danger ? 'danger' : '' }, text);
+    if (opts.disabled) b.disabled = true;
+    b.onclick = async () => {
+      closePlayerMenu();
+      if (opts.confirm && !confirm(opts.confirm)) return;
+      if (opts.run) return opts.run();
+      await playerDo(player, action, args);
+      loadPlayers();
+    };
+    items.push(b);
+  };
+
+  label(name + (online ? ' · online' : ' · offline'));
+  item(player.op ? 'Remove OP' : 'Give OP', player.op ? 'deop' : 'op', {}, {
+    confirm: player.op ? null : `Give ${name} operator powers? OPs can use every command, including /stop and /ban.`,
+  });
+  if (player.whitelisted) item('Remove from whitelist', null, {}, { run: async () => { await attempt(() => api.whitelistRemove(s.id, player.name)); loadPlayers(); } });
+  else item('Add to whitelist', null, {}, { disabled: !player.name, run: async () => { await addToWhitelist(player.name); loadPlayers(); } });
+
+  label('Teleport');
+  item(host ? `Bring ${name} to me` : 'Bring to me', 'tp-to', { target: host }, { disabled: !hostOnline });
+  item(host ? `Send me to ${name}` : 'Send me to them', 'tp-from', { target: host }, { disabled: !hostOnline });
+  for (const other of others.slice(0, 6)) {
+    if (host && other.name.toLowerCase() === host.toLowerCase()) continue;
+    item(`Send to ${other.name}`, 'tp-to', { target: other.name }, { disabled: !online });
+  }
+
+  label('Game mode');
+  for (const mode of ['survival', 'creative', 'adventure', 'spectator']) {
+    item(mode[0].toUpperCase() + mode.slice(1), 'gamemode', { mode }, {});
+  }
+
+  label('Health');
+  item('Heal', 'heal');
+  item('Feed', 'feed');
+
+  label('Moderation');
+  item('Kick', 'kick', {}, { disabled: !online, danger: true, confirm: `Kick ${name} from the server?` });
+  if (player.banned) item('Unban', 'pardon');
+  else item('Ban', 'ban', {}, { danger: true, confirm: `Ban ${name}? They won't be able to join until you unban them.` });
+  item('Kill', 'kill', {}, { disabled: !online, danger: true, confirm: `Kill ${name}? They will drop their items.` });
+  item('Clear inventory', 'clear', {}, { danger: true, confirm: `Delete everything in ${name}'s inventory? This can't be undone.` });
+
+  const menu = $('player-menu');
+  fill(menu, items);
+  menu.classList.remove('hidden');
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8))}px`;
+}
+
+function closePlayerMenu() {
+  $('player-menu').classList.add('hidden');
 }
 
 // ---------- world: pregeneration ----------
@@ -1103,6 +1215,7 @@ function wire() {
       $('rename-modal').classList.add('hidden');
       $('host-modal').classList.add('hidden');
       closeMenu();
+      closePlayerMenu();
     }
   });
 
@@ -1137,6 +1250,7 @@ function wire() {
   $('host-form').onsubmit = async (e) => {
     e.preventDefault();
     if (await attempt(async () => (await api.setHostName($('host-input').value.trim()), true))) {
+      state.host = $('host-input').value.trim();
       $('host-modal').classList.add('hidden');
       startServer();
     }
@@ -1148,7 +1262,7 @@ function wire() {
   };
   $('wl-enabled').onchange = async (e) => {
     const on = e.target.checked;
-    if (!on && !confirm('Turn off the list? Anyone who has the address will be able to join.')) {
+    if (!on && !confirm('Turn off the whitelist? Anyone who has the server address will be able to join.')) {
       e.target.checked = true;
       return;
     }
@@ -1162,6 +1276,7 @@ function wire() {
   document.querySelectorAll('#ctx-menu button').forEach((b) => (b.onclick = () => runMenu(b.dataset.cmd)));
   document.addEventListener('click', (e) => {
     if (!$('ctx-menu').contains(e.target)) closeMenu();
+    if (!$('player-menu').contains(e.target)) closePlayerMenu();
   });
   $('rename-cancel').onclick = () => $('rename-modal').classList.add('hidden');
   $('rename-form').onsubmit = async (e) => {

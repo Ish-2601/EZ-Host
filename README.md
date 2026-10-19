@@ -27,8 +27,9 @@ Early development. Working today:
 - A separate port and online address for each server
 - Pregenerate the world with Chunky (added automatically), with live progress
 - Players: heads, hearts, hunger, inventory and ender chest; heal, feed, give, remove items, game mode, XP, OP, kick
-- Whitelist on the Players tab: on by default for new servers, you are added automatically, one-click Allow for anyone turned away
-- World map rendered from the save, with live player heads; select chunks to keep them loaded
+- Whitelist switch on the Players tab (off by default), you are added automatically, and a "Trying to join" list with Approve/Deny
+- Right-click a player: OP, teleport, game mode, heal, feed, kick, ban, kill; OPs get a crown
+- World map rendered from the save, terrain or biomes with structure markers, live player heads, auto-refresh; select chunks to keep them loaded
 
 See [ROADMAP.md](ROADMAP.md) for what comes next.
 

@@ -440,8 +440,12 @@ class ServerManager extends EventEmitter {
       this.trackPregen(id, text);
       const refused = text.match(/Disconnecting (\w{3,16}) .*not white-listed/);
       if (refused) {
-        if (!this.refused.has(id)) this.refused.set(id, new Set());
-        this.refused.get(id).add(refused[1]);
+        this.refusedNames(id).add(refused[1]);
+        // A new attempt brings back someone who was dismissed earlier.
+        const config = this.readConfig(id);
+        if ((config.dismissedJoiners || []).includes(refused[1])) {
+          this.updateConfig(id, { dismissedJoiners: config.dismissedJoiners.filter((n) => n !== refused[1]) }).catch(() => {});
+        }
         this.emit('whitelist', id, { ...this.whitelistStatus(id), justRefused: refused[1] });
       }
     });
@@ -670,11 +674,37 @@ class ServerManager extends EventEmitter {
 
   whitelistStatus(id) {
     const props = this.readProperties(id);
+    const listed = new Set(this.readWhitelist(id).map((p) => p.name.toLowerCase()));
+    const dismissed = new Set((this.readConfig(id).dismissedJoiners || []).map((n) => n.toLowerCase()));
     return {
       enabled: props['white-list'] === 'true',
       players: this.readWhitelist(id),
-      refused: [...(this.refused.get(id) || [])],
+      refused: [...this.refusedNames(id)].filter((n) => !listed.has(n.toLowerCase()) && !dismissed.has(n.toLowerCase())),
     };
+  }
+
+  /** Names turned away by the whitelist: this session, plus the server's latest log. */
+  refusedNames(id) {
+    if (!this.refused.has(id)) {
+      const set = new Set();
+      try {
+        const log = fs.readFileSync(path.join(this.serverDir(id), 'logs', 'latest.log'), 'utf8');
+        for (const m of log.matchAll(/Disconnecting (\w{3,16}) .*not white-listed/g)) set.add(m[1]);
+      } catch {
+        // no log yet
+      }
+      this.refused.set(id, set);
+    }
+    return this.refused.get(id);
+  }
+
+  /** Hide someone from "Trying to join" without adding them. */
+  async denyJoiner(id, name) {
+    const config = this.readConfig(id);
+    const dismissed = new Set(config.dismissedJoiners || []);
+    dismissed.add(name);
+    await this.updateConfig(id, { dismissedJoiners: [...dismissed] });
+    this.emit('whitelist', id, this.whitelistStatus(id));
   }
 
   /** Look a player up with Mojang, so they can be added while the server is stopped. */
@@ -734,10 +764,11 @@ class ServerManager extends EventEmitter {
     const props = this.readProperties(id);
     // Servers that already have a server.properties keep the owner's choice,
     // except that the host is added if the list is on (Minecraft 26.3+ turns it on by default).
+    // New servers start with the list off (Minecraft 26.3+ would turn it on);
+    // the host is put on the list anyway, so turning it on later never locks them out.
     const isNew = !props['white-list'];
-    if (isNew) await this.writeProperties(id, { 'white-list': 'true', 'enforce-whitelist': 'true' });
-    const enabled = isNew || props['white-list'] === 'true';
-    if (enabled && host && !this.readWhitelist(id).some((p) => p.name.toLowerCase() === host.toLowerCase())) {
+    if (isNew) await this.writeProperties(id, { 'white-list': 'false', 'enforce-whitelist': 'false' });
+    if (host && !this.readWhitelist(id).some((p) => p.name.toLowerCase() === host.toLowerCase())) {
       try {
         const profile = await this.lookupProfile(host);
         await fsp.writeFile(this.whitelistFile(id), JSON.stringify([...this.readWhitelist(id), profile], null, 2));
@@ -819,6 +850,12 @@ class ServerManager extends EventEmitter {
       await playersLib.setOpOffline(this.serverDir(id), player, action === 'op');
       return '';
     }
+    if (action === 'ban' || action === 'pardon') {
+      if (running) return this.rcon(id, playersLib.onlineCommands(player.name, action, args)[0]);
+      await playersLib.setBanOffline(this.serverDir(id), player, action === 'ban', args.reason);
+      return '';
+    }
+    if (['tp-to', 'tp-from', 'kill'].includes(action)) throw new Error(`${player.name} needs to be online for that`);
     if (action === 'kick') throw new Error(`${player.name} is not online`);
     if (action === 'give') throw new Error(`${player.name} needs to be online to receive items`);
     const props = this.readProperties(id);
@@ -851,16 +888,16 @@ class ServerManager extends EventEmitter {
       .readdirSync(dir)
       .map((f) => f.match(/^r\.(-?\d+)\.(-?\d+)\.mca$/))
       .filter(Boolean)
-      .map((m) => ({ rx: Number(m[1]), rz: Number(m[2]) }));
+      .map((m) => ({ rx: Number(m[1]), rz: Number(m[2]), mtime: fs.statSync(path.join(dir, m[0])).mtimeMs }));
   }
 
-  async mapTile(id, dim, rx, rz) {
+  async mapTile(id, dim, rx, rz, mode = 'terrain') {
     const dir = worldMap.regionDir(this.worldDir(id), this.checkDim(dim));
     if (!dir || !Number.isInteger(rx) || !Number.isInteger(rz)) throw new Error('No such region');
     const file = path.join(dir, `r.${rx}.${rz}.mca`);
     if (!fs.existsSync(file)) throw new Error('No such region');
     const cacheDir = path.join(this.serverDir(id), '.selfhost', 'map', dim.replace(/[:/]/g, '_'));
-    return this.mapRenderer.tile(file, cacheDir);
+    return this.mapRenderer.tile(file, cacheDir, mode === 'biomes' ? 'biomes' : 'terrain');
   }
 
   /** Where online players are: [{ name, uuid, x, z, dim }]. */
@@ -875,7 +912,7 @@ class ServerManager extends EventEmitter {
         const pos = parseSnbt(posText.slice(posText.indexOf('[')));
         const dim = (dimText.match(/"([^"]+)"/) || [])[1] || 'minecraft:overworld';
         const player = known.find((p) => p.name && p.name.toLowerCase() === name.toLowerCase());
-        out.push({ name, uuid: player ? player.uuid : null, x: pos[0], z: pos[2], dim });
+        out.push({ name, uuid: player ? player.uuid : null, op: Boolean(player && player.op), x: pos[0], z: pos[2], dim });
       } catch {
         // player left between calls
       }

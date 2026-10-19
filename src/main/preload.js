@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('api', {
   whitelistAdd: invoke('whitelist:add'),
   whitelistRemove: invoke('whitelist:remove'),
   whitelistEnable: invoke('whitelist:enable'),
+  whitelistDeny: invoke('whitelist:deny'),
   hostName: invoke('settings:hostName'),
   setHostName: invoke('settings:setHostName'),
   onWhitelist: subscribe('server:whitelist'),

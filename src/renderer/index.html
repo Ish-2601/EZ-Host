@@ -219,7 +219,7 @@
           <div class="map-head">
             <h3>Who can join</h3>
             <span class="spacer"></span>
-            <label class="checkbox"><input id="wl-enabled" type="checkbox" /> Only players on this list (recommended)</label>
+            <label class="switch"><input id="wl-enabled" type="checkbox" /><span class="switch-track"></span><span id="wl-switch-label">Whitelist off</span></label>
           </div>
           <p id="wl-help" class="muted small"></p>
           <div id="wl-refused" class="wl-refused hidden"></div>
@@ -232,6 +232,7 @@
         <div class="players-layout">
           <div class="card player-list-card">
             <h3>Players</h3>
+            <p class="muted small">Right-click a player for actions.</p>
             <ul id="player-list" class="player-list"></ul>
           </div>
           <div id="player-detail" class="card player-detail"></div>
@@ -243,10 +244,20 @@
           <div class="map-head">
             <h3>World map</h3>
             <span class="spacer"></span>
+            <select id="map-style" title="Map style">
+              <option value="terrain">Terrain</option>
+              <option value="biomes">Biomes and structures</option>
+            </select>
             <select id="map-dim"></select>
             <button id="map-zoom-out" class="btn" title="Zoom out">−</button>
             <button id="map-zoom-in" class="btn" title="Zoom in">+</button>
             <button id="map-center" class="btn">Center</button>
+            <select id="map-refresh-every" title="How often the map updates">
+              <option value="10">Update every 10 s</option>
+              <option value="30">Every 30 s</option>
+              <option value="60">Every minute</option>
+              <option value="0">Only when I click Refresh</option>
+            </select>
             <button id="map-refresh" class="btn">Refresh</button>
           </div>
           <div class="map-wrap">
@@ -254,6 +265,7 @@
             <div id="map-empty" class="map-empty hidden">No map yet. Start the server once, or pregenerate, and land will appear here.</div>
             <div id="map-hover" class="map-hover"></div>
           </div>
+          <div id="map-legend" class="map-legend hidden"></div>
           <div class="map-bar">
             <label class="checkbox"><input id="map-select-mode" type="checkbox" /> Select chunks (drag on the map)</label>
             <span id="map-selection" class="muted small"></span>
@@ -318,6 +330,9 @@
       </div>
     </section>
   </main>
+
+  <!-- Right-click menu for a player (built when it opens) -->
+  <div id="player-menu" class="ctx-menu hidden" role="menu"></div>
 
   <!-- Right-click menu for a server in the sidebar -->
   <div id="ctx-menu" class="ctx-menu hidden" role="menu">

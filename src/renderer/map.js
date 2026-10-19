@@ -9,7 +9,9 @@ const WorldMap = (() => {
     cz: 0,
     scale: 1, // screen pixels per block
     regions: [],
-    tiles: new Map(), // "rx,rz" -> { img, loading }
+    tiles: new Map(), // "rx,rz" -> { img, loading, mtime, structures }
+    style: 'terrain', // 'terrain' | 'biomes'
+    refreshEvery: 10, // seconds; 0 = only when Refresh is clicked
     forced: [],
     players: [],
     heads: new Map(),
@@ -114,6 +116,8 @@ const WorldMap = (() => {
       g.strokeRect(x, z, x2s - x, z2s - z);
     }
 
+    if (m.style === 'biomes') drawStructures(g, w, h);
+
     g.font = '12px Segoe UI, sans-serif';
     g.textAlign = 'center';
     for (const p of m.players) {
@@ -123,12 +127,111 @@ const WorldMap = (() => {
       g.fillStyle = '#000';
       g.fillRect(x - 12, z - 12, 24, 24);
       if (head && head.complete && head.naturalWidth) g.drawImage(head, x - 11, z - 11, 22, 22);
+      if (p.op) drawCrown(g, x, z - 15);
       g.fillStyle = 'rgba(0,0,0,0.65)';
       const tw = g.measureText(p.name).width + 10;
       g.fillRect(x - tw / 2, z + 14, tw, 17);
       g.fillStyle = '#fff';
       g.fillText(p.name, x, z + 27);
     }
+  }
+
+  // What each structure looks like on the map: [letter, color, label].
+  const STRUCTURES = [
+    [/village/, 'V', '#ffd166', 'Village'],
+    [/pillager_outpost/, 'P', '#a0a0a0', 'Pillager outpost'],
+    [/mansion/, 'M', '#8b5a2b', 'Woodland mansion'],
+    [/monument/, 'O', '#4fc3f7', 'Ocean monument'],
+    [/desert_pyramid|jungle_pyramid|jungle_temple|desert_temple/, 'T', '#ffb74d', 'Temple'],
+    [/swamp_hut|witch/, 'W', '#7cb342', 'Witch hut'],
+    [/igloo/, 'I', '#e0f7fa', 'Igloo'],
+    [/ancient_city/, 'A', '#26a69a', 'Ancient city'],
+    [/trial_chambers/, 'C', '#ff8a65', 'Trial chambers'],
+    [/stronghold/, 'S', '#b39ddb', 'Stronghold'],
+    [/ruined_portal/, 'R', '#9575cd', 'Ruined portal'],
+    [/shipwreck/, 'H', '#90a4ae', 'Shipwreck'],
+    [/ocean_ruin/, 'U', '#4dd0e1', 'Ocean ruin'],
+    [/buried_treasure/, '$', '#ffd54f', 'Buried treasure'],
+    [/fortress/, 'F', '#e57373', 'Nether fortress'],
+    [/bastion/, 'B', '#424242', 'Bastion'],
+    [/end_city/, 'E', '#ce93d8', 'End city'],
+    [/trail_ruins/, 'L', '#bcaaa4', 'Trail ruins'],
+  ];
+
+  function structureStyle(id) {
+    if (/mineshaft|nether_fossil/.test(id)) return null; // too many to be useful
+    const found = STRUCTURES.find(([re]) => re.test(id));
+    if (found) return { letter: found[1], color: found[2], label: found[3] };
+    // Modded structures: a gray marker labelled with the structure's name.
+    return { letter: '?', color: '#cfd8dc', label: id.slice(id.indexOf(':') + 1).replace(/_/g, ' ') };
+  }
+
+  function drawStructures(g, w, h) {
+    const size = Math.max(14, Math.min(22, 10 + m.scale * 4));
+    g.font = `bold ${Math.round(size * 0.6)}px Segoe UI, sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const seen = new Set();
+    for (const tile of m.tiles.values()) {
+      for (const st of tile.structures || []) {
+        const key = `${st.id}@${st.cx},${st.cz}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const style = structureStyle(st.id);
+        if (!style) continue;
+        const [x, z] = toScreen(st.cx * 16 + 8, st.cz * 16 + 8);
+        if (x < -20 || z < -20 || x > w + 20 || z > h + 20) continue;
+        g.fillStyle = 'rgba(0,0,0,0.6)';
+        g.beginPath();
+        g.arc(x, z, size / 2 + 2, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = style.color;
+        g.beginPath();
+        g.arc(x, z, size / 2, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#111';
+        g.fillText(style.letter, x, z + 1);
+      }
+    }
+    g.textBaseline = 'alphabetic';
+  }
+
+  function renderLegend() {
+    const legend = $('map-legend');
+    if (m.style !== 'biomes') {
+      legend.classList.add('hidden');
+      return;
+    }
+    const present = new Map();
+    for (const tile of m.tiles.values()) {
+      for (const st of tile.structures || []) {
+        const style = structureStyle(st.id);
+        if (style) present.set(style.label, style);
+      }
+    }
+    legend.classList.toggle('hidden', !present.size);
+    fill(legend, [...present.values()].map((st) => {
+      const swatch = el('i', {}, st.letter);
+      swatch.style.background = st.color;
+      return el('span', {}, swatch, st.label);
+    }));
+  }
+
+  function drawCrown(g, x, z) {
+    g.fillStyle = '#f5c518';
+    g.strokeStyle = '#7a5a00';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(x - 9, z + 4);
+    g.lineTo(x - 10, z - 4);
+    g.lineTo(x - 5, z);
+    g.lineTo(x, z - 6);
+    g.lineTo(x + 5, z);
+    g.lineTo(x + 10, z - 4);
+    g.lineTo(x + 9, z + 4);
+    g.closePath();
+    g.fill();
+    g.stroke();
   }
 
   function headImage(p) {
@@ -145,19 +248,23 @@ const WorldMap = (() => {
   function loadTile(rx, rz) {
     const key = `${rx},${rz}`;
     let tile = m.tiles.get(key);
-    if (tile) return tile;
-    tile = { loading: true, img: null };
+    if (tile && !tile.stale) return tile;
+    const previous = tile;
+    tile = { loading: true, img: previous ? previous.img : null, structures: previous ? previous.structures : [] };
     m.tiles.set(key, tile);
     const id = m.serverId;
     const dim = m.dim;
-    api.mapTile(id, dim, rx, rz).then(
+    const style = m.style;
+    api.mapTile(id, dim, rx, rz, style).then(
       (res) => {
-        if (id !== m.serverId || dim !== m.dim) return;
+        if (id !== m.serverId || dim !== m.dim || style !== m.style) return;
         const img = new Image();
         img.onload = draw;
         img.src = res.png;
         tile.img = img;
+        tile.structures = res.structures || [];
         tile.loading = false;
+        renderLegend();
       },
       () => {
         tile.loading = false;
@@ -213,12 +320,30 @@ const WorldMap = (() => {
     draw();
   }
 
-  async function loadRegions(recenter) {
-    m.tiles.clear();
-    m.regions = (await attempt(() => api.mapRegions(m.serverId, m.dim))) || [];
+  async function loadRegions(recenter, { quiet = false, reset = true } = {}) {
+    if (reset) m.tiles.clear();
+    const regions = (quiet ? await api.mapRegions(m.serverId, m.dim).catch(() => null) : await attempt(() => api.mapRegions(m.serverId, m.dim))) || m.regions;
+    // Tiles whose region file changed are fetched again on the next draw.
+    const before = new Map(m.regions.map((r) => [`${r.rx},${r.rz}`, r.mtime]));
+    for (const r of regions) {
+      const key = `${r.rx},${r.rz}`;
+      const tile = m.tiles.get(key);
+      if (tile && before.get(key) !== r.mtime) tile.stale = true;
+    }
+    m.regions = regions;
     $('map-empty').classList.toggle('hidden', m.regions.length > 0);
     if (recenter) center();
+    renderLegend();
     draw();
+  }
+
+  function startRefreshTimer() {
+    clearInterval(m.refreshTimer);
+    if (m.refreshEvery > 0) {
+      m.refreshTimer = setInterval(() => {
+        if (!document.hidden) loadRegions(false, { quiet: true, reset: false });
+      }, m.refreshEvery * 1000);
+    }
   }
 
   function center() {
@@ -273,11 +398,13 @@ const WorldMap = (() => {
     stopTimers();
     m.timers.push(setInterval(() => !document.hidden && refreshPlayers(), 3000));
     m.timers.push(setInterval(() => !document.hidden && refreshForced(), 10000));
+    startRefreshTimer();
   }
 
   function stopTimers() {
     m.timers.forEach(clearInterval);
     m.timers = [];
+    clearInterval(m.refreshTimer);
   }
 
   function wire() {
@@ -330,7 +457,35 @@ const WorldMap = (() => {
     $('map-zoom-in').onclick = () => zoom(1.5);
     $('map-zoom-out').onclick = () => zoom(1 / 1.5);
     $('map-center').onclick = center;
-    $('map-refresh').onclick = () => loadRegions(false);
+    $('map-refresh').onclick = () => loadRegions(false, { reset: false });
+    const saved = (key, fallback) => {
+      try {
+        return localStorage.getItem(key) ?? fallback;
+      } catch {
+        return fallback;
+      }
+    };
+    const save = (key, value) => {
+      try {
+        localStorage.setItem(key, value);
+      } catch {
+        // storage unavailable: the choice lasts until the app closes
+      }
+    };
+    m.style = saved('map.style', 'terrain');
+    m.refreshEvery = Number(saved('map.refreshEvery', '10'));
+    $('map-style').value = m.style;
+    $('map-refresh-every').value = String(m.refreshEvery);
+    $('map-style').onchange = () => {
+      m.style = $('map-style').value;
+      save('map.style', m.style);
+      loadRegions(false);
+    };
+    $('map-refresh-every').onchange = () => {
+      m.refreshEvery = Number($('map-refresh-every').value);
+      save('map.refreshEvery', String(m.refreshEvery));
+      startRefreshTimer();
+    };
     $('map-dim').onchange = () => {
       m.dim = $('map-dim').value;
       m.selection = null;

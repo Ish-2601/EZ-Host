@@ -48,9 +48,17 @@ function listPlayers(serverDir, props, onlineNames = []) {
     }
   }
   const ops = new Set(readJson(path.join(serverDir, 'ops.json'), []).map((o) => o.uuid));
+  const banned = new Set(readJson(path.join(serverDir, 'banned-players.json'), []).map((o) => o.uuid));
+  const listed = new Set(readJson(path.join(serverDir, 'whitelist.json'), []).map((o) => o.uuid));
   const online = new Set(onlineNames.map((n) => n.toLowerCase()));
   return [...byUuid.values()]
-    .map((p) => ({ ...p, op: ops.has(p.uuid), online: Boolean(p.name && online.has(p.name.toLowerCase())) }))
+    .map((p) => ({
+      ...p,
+      op: ops.has(p.uuid),
+      banned: banned.has(p.uuid),
+      whitelisted: listed.has(p.uuid),
+      online: Boolean(p.name && online.has(p.name.toLowerCase())),
+    }))
     .sort((a, b) => b.online - a.online || (b.lastPlayed || 0) - (a.lastPlayed || 0));
 }
 
@@ -190,6 +198,22 @@ function onlineCommands(name, action, args = {}) {
       return [`deop ${name}`];
     case 'kick':
       return [`kick ${name} ${String(args.reason || 'Kicked by the host').replace(/[\r\n]/g, ' ').slice(0, 100)}`];
+    case 'ban':
+      return [`ban ${name} ${String(args.reason || 'Banned by the host').replace(/[\r\n]/g, ' ').slice(0, 100)}`];
+    case 'pardon':
+      return [`pardon ${name}`];
+    case 'tp-to': {
+      // Send this player to another player.
+      if (!NAME_RE.test(args.target || '')) throw new Error('Choose who to teleport to');
+      return [`tp ${name} ${args.target}`];
+    }
+    case 'tp-from': {
+      // Bring another player (usually the host) to this player.
+      if (!NAME_RE.test(args.target || '')) throw new Error('Choose who to teleport');
+      return [`tp ${args.target} ${name}`];
+    }
+    case 'kill':
+      return [`kill ${name}`];
     default:
       throw new Error('Unknown action');
   }
@@ -249,6 +273,18 @@ function editOffline(root, action, args = {}) {
   }
 }
 
+/** Offline ban/pardon by editing banned-players.json (only while the server is stopped). */
+async function setBanOffline(serverDir, player, ban, reason) {
+  if (!player.name) throw new Error("This player's name is not known yet; start the server to ban them");
+  const file = path.join(serverDir, 'banned-players.json');
+  const list = readJson(file, []).filter((o) => o.uuid !== player.uuid);
+  if (ban) {
+    const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0000');
+    list.push({ uuid: player.uuid, name: player.name, created: now, source: 'Self-Host MC', expires: 'forever', reason: reason || 'Banned by the host' });
+  }
+  await fsp.writeFile(file, JSON.stringify(list, null, 2));
+}
+
 /** Offline op/deop by editing ops.json (only while the server is stopped). */
 async function setOpOffline(serverDir, player, op) {
   if (!player.name) throw new Error("This player's name is not known yet; start the server to change ops");
@@ -267,4 +303,5 @@ module.exports = {
   onlineCommands,
   editOffline,
   setOpOffline,
+  setBanOffline,
 };
