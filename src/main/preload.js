@@ -45,6 +45,12 @@ contextBridge.exposeInMainWorld('api', {
   getPlayers: invoke('servers:players'),
   onPlayit: subscribe('playit:status'),
   onPlayers: subscribe('server:players'),
+  getTunnel: invoke('servers:tunnel'),
+  newAddress: invoke('servers:newAddress'),
+  createVanilla: invoke('servers:createVanilla'),
+  minecraftVersions: invoke('minecraft:versions'),
+  openExternal: invoke('system:openExternal'),
+  onTunnel: subscribe('server:tunnel'),
 
   onConsole: subscribe('server:console'),
   onStatus: subscribe('server:status'),

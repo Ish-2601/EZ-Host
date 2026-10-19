@@ -6,7 +6,8 @@ const modrinth = require('../engine/modrinth');
 
 // Keep data in %APPDATA%\self-host-mc whether running from source or installed
 // (the installed app would otherwise use its product name, "Self-Host MC").
-app.setPath('userData', path.join(app.getPath('appData'), 'self-host-mc'));
+// SELF_HOST_MC_DATA points a test run at a separate folder so it never touches real servers.
+app.setPath('userData', process.env.SELF_HOST_MC_DATA || path.join(app.getPath('appData'), 'self-host-mc'));
 
 // One window only: opening the app again focuses the running one, so two
 // copies never fight over the same servers.
@@ -109,6 +110,13 @@ function registerIpc() {
   handle('playit:unlink', () => manager.unlinkPlayit());
   handle('playit:retry', (id) => manager.startTunnel(id));
   handle('servers:players', (id) => manager.players(id));
+  handle('servers:tunnel', (id) => manager.tunnelStatus(id));
+  handle('servers:newAddress', (id) => manager.newAddress(id));
+  handle('servers:createVanilla', (opts) => manager.createVanilla(opts));
+  handle('minecraft:versions', () => manager.listMinecraftVersions());
+  handle('system:openExternal', (url) => {
+    if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url);
+  });
 
   handle('profiles:list', () => manager.listProfiles());
   handle('servers:createFromProfile', (opts) => manager.createFromProfile(opts));
@@ -151,6 +159,7 @@ function registerIpc() {
   manager.on('changed', () => send('servers:changed'));
   manager.on('playit', (state) => send('playit:status', state));
   manager.on('players', (id, players) => send('server:players', id, players));
+  manager.on('tunnel', (id, state) => send('server:tunnel', id, state));
 }
 
 app.whenReady().then(() => {

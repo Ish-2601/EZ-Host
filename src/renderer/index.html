@@ -56,6 +56,10 @@
           <span class="source-title">A .mrpack file</span>
           <span class="source-sub">A modpack file you downloaded.</span>
         </button>
+        <button class="source-tab" data-source="vanilla" role="tab">
+          <span class="source-title">Plain Minecraft</span>
+          <span class="source-sub">No mods. Friends join with the normal game.</span>
+        </button>
       </div>
 
       <div id="source-profiles" class="source-panel hidden">
@@ -70,6 +74,13 @@
         </form>
         <div id="search-status" class="muted small"></div>
         <div id="search-results" class="pack-grid"></div>
+      </div>
+
+      <div id="source-vanilla" class="source-panel hidden">
+        <div class="card center">
+          <p>A normal Minecraft server with no mods. Anyone with the same Minecraft version can join.</p>
+          <button id="vanilla-continue" class="btn btn-primary">Continue</button>
+        </div>
       </div>
 
       <div id="source-file" class="source-panel hidden">
@@ -94,6 +105,10 @@
         </div>
       </div>
       <form id="create-form" class="card form">
+        <label id="mc-version-field" class="hidden">Minecraft version
+          <select id="mc-version"></select>
+          <span class="muted small">Players need this exact version. The newest is picked for you.</span>
+        </label>
         <label id="version-field">Modpack version
           <select id="pack-version"></select>
           <span id="version-meta" class="muted small"></span>
@@ -161,7 +176,7 @@
           <div id="join-modpack-hint" class="muted small hidden"></div>
         </div>
 
-        <div class="card">
+        <div id="export-card" class="card">
           <h3>Give your friends the same mods</h3>
           <div class="row wrap">
             <button id="export-cf" class="btn btn-primary">Save pack for CurseForge (.zip)</button>
@@ -186,7 +201,7 @@
           </ol>
         </div>
 
-        <div class="card">
+        <div id="check-card" class="card">
           <h3>Check a profile on this PC</h3>
           <p class="muted small">See whether one of your CurseForge or Prism profiles can join this server.</p>
           <div class="check">
@@ -245,6 +260,27 @@
       </div>
     </section>
   </main>
+
+  <!-- Right-click menu for a server in the sidebar -->
+  <div id="ctx-menu" class="ctx-menu hidden" role="menu">
+    <button data-cmd="open" role="menuitem">Open</button>
+    <button data-cmd="rename" role="menuitem">Rename…</button>
+    <button data-cmd="settings" role="menuitem">Settings</button>
+    <button data-cmd="folder" role="menuitem">Open server folder</button>
+    <hr />
+    <button data-cmd="delete" class="danger" role="menuitem">Delete server…</button>
+  </div>
+
+  <div id="rename-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+    <form id="rename-form" class="modal-box">
+      <h2 id="rename-title">Rename server</h2>
+      <input id="rename-input" type="text" maxlength="64" required />
+      <div class="row end">
+        <button id="rename-cancel" type="button" class="btn btn-ghost">Cancel</button>
+        <button type="submit" class="btn btn-primary">Rename</button>
+      </div>
+    </form>
+  </div>
 
   <!-- Minecraft EULA, asked once per server before its first start -->
   <div id="eula-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="eula-title">

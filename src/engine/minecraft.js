@@ -41,4 +41,10 @@ async function vanillaServerDownload(minecraftVersion) {
   return { url: server.url, sha1: server.sha1, size: server.size };
 }
 
-module.exports = { requiredJavaVersion, vanillaServerDownload, fallbackJavaVersion };
+/** Release versions (newest first) that have an official server download. */
+async function listReleases() {
+  if (!manifestCache) manifestCache = await getJson(MANIFEST);
+  return manifestCache.versions.filter((v) => v.type === 'release').map((v) => ({ id: v.id, releaseTime: v.releaseTime }));
+}
+
+module.exports = { requiredJavaVersion, vanillaServerDownload, fallbackJavaVersion, listReleases };

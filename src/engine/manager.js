@@ -12,7 +12,7 @@ const { dataPaths } = require('./paths');
 const { download } = require('./http');
 const modrinth = require('./modrinth');
 const { installMrpack } = require('./mrpack');
-const { requiredJavaVersion } = require('./minecraft');
+const { requiredJavaVersion, listReleases } = require('./minecraft');
 const { ensureJava } = require('./java');
 const { installLoader } = require('./loaders');
 const { ServerProcess } = require('./server-process');
@@ -37,6 +37,7 @@ class ServerManager extends EventEmitter {
     this.processes = new Map();
     this.installing = new Set();
     this.installLogs = new Map();
+    this.tunnels = new Map();
     this.playit = new Playit(dataRoot);
     this.playit.on('status', (state) => this.emit('playit', state));
     this.playit.on('log', (line) => this.emit('playit-log', line));
@@ -189,13 +190,28 @@ class ServerManager extends EventEmitter {
     return this.describe(id);
   }
 
+  /** Create a plain Minecraft server with no mods. */
+  async createVanilla({ name, minecraft, memoryMb = 2048 }) {
+    const releases = await listReleases();
+    if (!releases.some((r) => r.id === minecraft)) throw new Error(`Unknown Minecraft version ${minecraft}`);
+    const id = await this.createConfig(name || `Minecraft ${minecraft}`, memoryMb, { type: 'vanilla' });
+    this.runInstall(id, async () => ({ name: 'Minecraft', versionId: minecraft, minecraft, loader: 'vanilla', loaderVersion: null }));
+    return this.describe(id);
+  }
+
+  listMinecraftVersions() {
+    return listReleases();
+  }
+
   async createConfig(name, memoryMb, source) {
     const id = this.newId(name);
+    const port = this.freePort(id);
     await fsp.mkdir(this.serverDir(id), { recursive: true });
     await this.writeConfig({
       id,
       name,
       source,
+      port,
       memoryMb,
       eulaAccepted: false,
       installed: false,
@@ -303,6 +319,9 @@ class ServerManager extends EventEmitter {
   async clientNeeds(id) {
     const config = this.readConfig(id);
     if (!config.installed) throw new Error('Server is not installed yet');
+    if (config.source.type === 'vanilla') {
+      return { minecraft: config.minecraft, loader: 'vanilla', loaderVersion: null, mods: [] };
+    }
     if (config.source.type === 'profile') {
       return {
         minecraft: config.minecraft,
@@ -396,6 +415,7 @@ class ServerManager extends EventEmitter {
     const existing = this.processes.get(id);
     if (existing && existing.child) throw new Error('Server is already running');
 
+    await this.prepareNetwork(id);
     const { javaPath } = await ensureJava(config.javaMajor, this.paths.java, {
       log: (message) => this.emit('console', id, { text: message, stream: 'system' }),
     });
@@ -409,7 +429,9 @@ class ServerManager extends EventEmitter {
     proc.on('status', (status) => this.emit('status', id, status));
     proc.on('players', (players) => this.emit('players', id, players));
     proc.on('exit', () => {
-      // Close the tunnel once no server is left running.
+      const tunnel = this.tunnels.get(id);
+      if (tunnel) this.setTunnel(id, { ...tunnel, state: 'stopped', message: '' });
+      // Stop the playit agent once no server is left running.
       const anyRunning = [...this.processes.values()].some((p) => p.child);
       if (!anyRunning) this.playit.stop().catch(() => {});
     });
@@ -419,24 +441,117 @@ class ServerManager extends EventEmitter {
     return this.describe(id);
   }
 
-  /** Open (or re-point) the playit.gg tunnel for a server. Errors also arrive as 'playit' events. */
+  // ---------- ports and online addresses ----------
+
+  serverPort(id) {
+    const config = this.readConfig(id);
+    return Number(this.readProperties(id)['server-port']) || config.port || 25565;
+  }
+
+  /** A game port no other server uses, starting at Minecraft's default. */
+  freePort(exceptId) {
+    const used = new Set();
+    for (const s of this.list()) {
+      if (s.id === exceptId) continue;
+      try {
+        used.add(this.serverPort(s.id));
+      } catch {
+        // ignore broken configs
+      }
+    }
+    let port = 25565;
+    while (used.has(port) || used.has(port + 10000)) port++;
+    return port;
+  }
+
+  /**
+   * Before each start: give the server a port no other server uses, so each
+   * one can run at the same time with its own address, and turn on RCON
+   * (local remote control) so the app can read player data and run commands.
+   */
+  async prepareNetwork(id) {
+    const config = this.readConfig(id);
+    let port = this.serverPort(id);
+    const others = this.list().filter((s) => s.id !== id).map((s) => this.serverPort(s.id));
+    if (others.includes(port)) {
+      port = this.freePort(id);
+      this.emit('console', id, { text: `Port ${this.serverPort(id)} is used by another server; this one now uses ${port}.`, stream: 'system' });
+    }
+    const rconPassword = config.rconPassword || crypto.randomBytes(16).toString('hex');
+    await this.writeProperties(id, {
+      'server-port': port,
+      'enable-rcon': 'true',
+      'rcon.port': port + 10000,
+      'rcon.password': rconPassword,
+      'broadcast-rcon-to-ops': 'false',
+    });
+    if (config.port !== port || config.rconPassword !== rconPassword) await this.updateConfig(id, { port, rconPassword });
+  }
+
+  setTunnel(id, state) {
+    this.tunnels.set(id, state);
+    this.emit('tunnel', id, state);
+  }
+
+  tunnelStatus(id) {
+    const config = this.readConfig(id);
+    return this.tunnels.get(id) || { state: 'stopped', address: config.address || null };
+  }
+
+  /** Open (or re-point) the playit.gg tunnel for one server. Progress arrives as 'tunnel' events. */
   async startTunnel(id) {
-    const port = Number(this.readProperties(id)['server-port']) || 25565;
-    const address = await this.playit.start(port, (line) => this.emit('console', id, { text: line, stream: 'system' }));
-    this.emit('console', id, { text: `Online address for friends: ${address}`, stream: 'system' });
-    return address;
+    const config = this.readConfig(id);
+    const log = (line) => this.emit('console', id, { text: line, stream: 'system' });
+    this.setTunnel(id, { state: 'starting', address: config.address || null, message: 'Getting your online address…' });
+    try {
+      await this.playit.startAgent(log);
+      const claimed = this.list()
+        .filter((s) => s.id !== id && s.tunnelId)
+        .map((s) => s.tunnelId);
+      const { tunnelId, address, notices } = await this.playit.ensureTunnel({
+        tunnelId: config.tunnelId,
+        port: this.serverPort(id),
+        name: config.name,
+        claimed,
+      });
+      if (config.tunnelId !== tunnelId || config.address !== address) await this.updateConfig(id, { tunnelId, address });
+      const warning = notices.find((n) => n.priority === 'Critical' || n.priority === 'High');
+      const proc = this.processes.get(id);
+      this.setTunnel(id, {
+        state: proc && proc.child ? 'online' : 'stopped',
+        address,
+        message: warning ? warning.message : '',
+        resolveLink: warning ? warning.resolve_link : null,
+      });
+      log(`Online address for friends: ${address}`);
+      return address;
+    } catch (err) {
+      this.setTunnel(id, { state: 'error', address: config.address || null, message: err.message });
+      throw err;
+    }
+  }
+
+  /** Throw away this server's playit address and get a new random one. */
+  async newAddress(id) {
+    const config = this.readConfig(id);
+    if (config.tunnelId) await this.playit.deleteTunnel(config.tunnelId);
+    await this.updateConfig(id, { tunnelId: null, address: null });
+    this.setTunnel(id, { state: 'stopped', address: null });
+    const proc = this.processes.get(id);
+    if (proc && proc.child) return this.startTunnel(id);
+    return null;
   }
 
   /** Link playit.gg; `openUrl` opens the approval page in the user's browser. */
   async linkPlayit(openUrl) {
     await this.playit.link(openUrl);
-    // If a server is already running, give it an online address right away.
-    const running = [...this.processes.entries()].find(([, p]) => p.child);
-    if (running) this.startTunnel(running[0]).catch(() => {});
+    // Servers that are already running get their online address right away.
+    for (const [id, p] of this.processes) if (p.child) this.startTunnel(id).catch(() => {});
   }
 
   async unlinkPlayit() {
     await this.playit.unlink();
+    for (const id of this.tunnels.keys()) this.setTunnel(id, { state: 'stopped', address: null });
   }
 
   playitStatus() {
@@ -463,7 +578,10 @@ class ServerManager extends EventEmitter {
     if (this.installing.has(id)) throw new Error('Wait for the install to finish first');
     const proc = this.processes.get(id);
     if (proc && proc.child) throw new Error('Stop the server before deleting it');
+    const { tunnelId } = this.readConfig(id);
+    if (tunnelId && this.playit.isLinked()) await this.playit.deleteTunnel(tunnelId).catch(() => {});
     this.processes.delete(id);
+    this.tunnels.delete(id);
     await fsp.rm(this.serverDir(id), { recursive: true, force: true });
     this.emit('changed');
   }

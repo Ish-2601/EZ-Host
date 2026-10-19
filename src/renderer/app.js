@@ -12,6 +12,8 @@ const state = {
   players: {}, // serverId -> [names]
   playit: { state: 'unlinked', linked: false },
   join: {}, // serverId -> joinInfo
+  tunnels: {}, // serverId -> { state, address, message, resolveLink }
+  menuFor: null, // server id the right-click menu is open for
 };
 
 const MAX_CONSOLE_LINES = 2000;
@@ -128,8 +130,13 @@ function statusWord(s) {
 function renderServerList() {
   $('server-list').replaceChildren(
     ...state.servers.map((s) =>
-      el('li', { class: `server-item${s.id === state.selectedId ? ' active' : ''}`, onclick: () => openServer(s.id) },
-        icon(s.source && s.source.iconUrl),
+      el('li', {
+        class: `server-item${s.id === state.selectedId ? ' active' : ''}`,
+        onclick: () => openServer(s.id),
+        oncontextmenu: (e) => openMenu(e, s.id),
+        title: 'Right-click for more options',
+      },
+        icon(s.source && (s.source.iconUrl || (s.source.type === 'vanilla' ? 'icon.svg' : null))),
         el('div', { class: 'grow' },
           el('div', { class: 'name' }, s.name),
           el('div', { class: 'sub' }, statusWord(s))
@@ -143,11 +150,10 @@ function renderServerList() {
 function renderPlayitPill() {
   const p = state.playit;
   const text = !p.linked ? 'Online address: not set up'
-    : p.state === 'online' ? 'Online address: on'
-    : p.state === 'starting' ? 'Online address: connecting…'
-    : p.state === 'error' ? 'Online address: problem'
-    : 'Online address: ready';
-  $('playit-pill').replaceChildren(el('span', { class: `dot ${p.linked ? p.state : ''}` }), text);
+    : p.state === 'running' ? 'Online addresses: on'
+    : p.state === 'error' ? 'Online addresses: problem'
+    : 'Online addresses: ready';
+  $('playit-pill').replaceChildren(el('span', { class: `dot ${p.state === 'running' ? 'online' : p.state === 'error' ? 'error' : ''}` }), text);
 }
 
 async function refreshServers() {
@@ -173,7 +179,7 @@ function openNewServer() {
 async function selectSource(source) {
   state.source = source;
   document.querySelectorAll('.source-tab').forEach((t) => t.classList.toggle('active', t.dataset.source === source));
-  for (const s of ['profiles', 'modrinth', 'file']) $(`source-${s}`).classList.toggle('hidden', s !== source);
+  for (const s of ['profiles', 'modrinth', 'file', 'vanilla']) $(`source-${s}`).classList.toggle('hidden', s !== source);
   if (source === 'profiles') await loadProfiles();
   if (source === 'modrinth') {
     if (!$('search-results').children.length) search('');
@@ -246,6 +252,7 @@ function openDetails({ title, description, iconUrl, name, ram }) {
 function chooseProfile(p) {
   state.pending = { kind: 'profile', profile: p };
   $('version-field').classList.add('hidden');
+  $('mc-version-field').classList.add('hidden');
   openDetails({
     title: p.name,
     description: `${p.launcherName} profile · Minecraft ${p.minecraft} · ${loaderName(p.loader, p.loaderVersion)} · ${p.modCount} mods. The server will use the same mods, so this profile can join it.`,
@@ -257,6 +264,7 @@ function chooseProfile(p) {
 async function chooseModrinthPack(hit) {
   state.pending = { kind: 'modrinth', hit, versions: [] };
   $('version-field').classList.remove('hidden');
+  $('mc-version-field').classList.add('hidden');
   openDetails({ title: hit.title, description: hit.description, iconUrl: hit.iconUrl, name: hit.title, ram: recommendedRam(150) });
   const select = $('pack-version');
   select.replaceChildren(el('option', {}, 'Loading versions…'));
@@ -284,15 +292,40 @@ function updateVersionMeta() {
   if (v) $('version-meta').textContent = `Released ${new Date(v.datePublished).toLocaleDateString()} · ${formatMb(Math.max(1, Math.round(v.file.size / 1048576)))} download`;
 }
 
+async function chooseVanilla() {
+  state.pending = { kind: 'vanilla' };
+  $('version-field').classList.add('hidden');
+  $('mc-version-field').classList.remove('hidden');
+  openDetails({
+    title: 'Plain Minecraft',
+    description: 'A normal Minecraft server with no mods.',
+    name: 'Minecraft',
+    ram: Math.min(3072, recommendedRam(0)),
+  });
+  const select = $('mc-version');
+  select.replaceChildren(el('option', {}, 'Loading versions…'));
+  select.disabled = true;
+  const versions = await attempt(() => api.minecraftVersions());
+  if (!versions || state.pending.kind !== 'vanilla') return;
+  select.replaceChildren(...versions.map((v) => el('option', { value: v.id }, v.id)));
+  select.disabled = false;
+  const syncName = () => {
+    const name = $('server-name');
+    if (!name.value || /^Minecraft( [\d.]+)?$/.test(name.value)) name.value = `Minecraft ${select.value}`;
+  };
+  select.onchange = syncName;
+  syncName();
+}
+
 async function createServer(event) {
   event.preventDefault();
   const p = state.pending;
   if (!p) return;
   const common = { name: $('server-name').value.trim(), memoryMb: Number($('server-ram').value) };
   const created = await attempt(() =>
-    p.kind === 'profile'
-      ? api.createFromProfile({ ...common, profileId: p.profile.id })
-      : api.createFromModrinth({ ...common, projectId: p.hit.id, versionId: $('pack-version').value })
+    p.kind === 'profile' ? api.createFromProfile({ ...common, profileId: p.profile.id })
+    : p.kind === 'vanilla' ? api.createVanilla({ ...common, minecraft: $('mc-version').value })
+    : api.createFromModrinth({ ...common, projectId: p.hit.id, versionId: $('pack-version').value })
   );
   if (created) {
     await refreshServers();
@@ -317,6 +350,7 @@ async function openServer(id) {
   const s = current() || (await attempt(() => api.getServer(id)));
   if (!s) return;
   state.players[id] = (await attempt(() => api.getPlayers(id))) || [];
+  state.tunnels[id] = (await attempt(() => api.getTunnel(id))) || {};
   renderServer(s);
   switchTab(s.status === 'installing' || s.installError || s.crashed ? 'console' : 'friends');
   const history = (await attempt(() => api.getConsole(id))) || [];
@@ -330,9 +364,10 @@ function renderServer(s) {
   $('srv-name').textContent = s.name;
   $('srv-icon').src = (s.source && s.source.iconUrl) || 'icon.svg';
   const parts = [];
-  if (s.packName) parts.push(`${s.packName} ${s.packVersion || ''}`.trim());
+  if (s.loader === 'vanilla') parts.push('No mods');
+  else if (s.packName) parts.push(`${s.packName} ${s.packVersion || ''}`.trim());
   if (s.minecraft) parts.push(`Minecraft ${s.minecraft}`);
-  if (s.loader) parts.push(loaderName(s.loader, s.loaderVersion));
+  if (s.loader && s.loader !== 'vanilla') parts.push(loaderName(s.loader, s.loaderVersion));
   parts.push(`${formatMb(s.memoryMb)} memory`);
   $('srv-meta').textContent = parts.join(' · ');
   renderStatus(s);
@@ -435,6 +470,7 @@ function renderOnlineBox() {
   const s = current();
   if (!s) return;
   const p = state.playit;
+  const t = state.tunnels[s.id] || {};
   const running = ['starting', 'running'].includes(s.status);
   let content;
 
@@ -447,28 +483,41 @@ function renderOnlineBox() {
   } else if (!p.linked) {
     content = el('div', { class: 'notice' },
       el('strong', {}, 'Let friends join from anywhere'),
-      el('p', {}, 'Self-Host MC uses playit.gg, a free service, to give your server an online address. No router settings needed. You link it once, in your browser.'),
+      el('p', {}, 'Self-Host MC uses playit.gg, a free service, to give each server its own online address. No router settings needed. You link it once, in your browser.'),
       p.message ? el('p', { class: 'small' }, p.message) : null,
       el('button', { class: 'btn btn-primary', onclick: () => attempt(() => api.playitLink()) }, 'Connect playit.gg')
     );
-  } else if (p.state === 'online' && p.address && running) {
-    content = el('div', { class: 'online-box' },
-      el('div', { class: 'address-big' }, el('code', {}, p.address), copyButton(p.address)),
-      el('p', { class: 'muted small' }, p.message || 'Friends paste this into Minecraft: Multiplayer, Add Server.'),
-      p.resolveLink ? el('a', { href: p.resolveLink, target: '_blank', rel: 'noreferrer' }, 'Fix this on playit.gg') : null
-    );
-  } else if (p.state === 'starting' && running) {
-    content = el('p', { class: 'muted' }, 'Getting your online address…');
-  } else if (p.state === 'error') {
+  } else if (t.state === 'error') {
     content = el('div', { class: 'notice error' },
       el('strong', {}, 'The online address is not working'),
-      el('p', {}, p.message || 'Something went wrong with playit.gg.'),
+      el('p', {}, t.message || 'Something went wrong with playit.gg.'),
       running ? el('button', { class: 'btn', onclick: () => attempt(() => api.playitRetry(s.id)) }, 'Try again') : null
     );
+  } else if (t.address) {
+    const status = t.state === 'online' && running ? 'Friends can join with this address now.'
+      : t.state === 'starting' ? 'Connecting…'
+      : 'This is the server\'s address. It works while the server is running.';
+    content = el('div', { class: 'online-box' },
+      el('div', { class: 'address-big' }, el('code', {}, t.address), copyButton(t.address)),
+      el('p', { class: 'muted small' }, status),
+      t.message ? el('p', { class: 'small' }, t.message) : null,
+      t.resolveLink ? el('a', { href: t.resolveLink, target: '_blank', rel: 'noreferrer' }, 'Fix this on playit.gg') : null,
+      el('details', { class: 'lan' },
+        el('summary', {}, 'Change this address'),
+        el('div', { class: 'card', style: null },
+          el('p', { class: 'small' }, 'Each server has its own address. The free playit.gg plan picks the name for you, but you can swap it for a new random one. Friends will need the new address.'),
+          el('p', { class: 'small muted' }, 'Choosing your own name (like myserver.joinmc.link) needs playit.gg Premium or a domain you own. You set that up on the playit.gg website.'),
+          el('div', { class: 'address-actions' },
+            el('button', { class: 'btn', type: 'button', onclick: () => newAddress(s) }, 'Get a new random address'),
+            el('button', { class: 'btn btn-ghost', type: 'button', onclick: () => attempt(() => api.openExternal('https://playit.gg/account/tunnels')) }, 'Open playit.gg')
+          )
+        )
+      )
+    );
+  } else if (t.state === 'starting') {
+    content = el('p', { class: 'muted' }, 'Getting this server\'s online address…');
   } else {
-    content = el('p', { class: 'muted' }, p.address
-      ? `Your online address is ${p.address}. It works while the server is running.`
-      : 'Start the server to get your online address.');
+    content = el('p', { class: 'muted' }, 'Start the server to get its online address. Each server gets its own.');
   }
   $('online-box').replaceChildren(content);
 
@@ -476,6 +525,68 @@ function renderOnlineBox() {
     ? 'This PC is linked to playit.gg. Disconnecting removes the link from this PC only.'
     : 'Not connected.';
   $('playit-unlink').disabled = !p.linked;
+}
+
+async function newAddress(s) {
+  if (!confirm(`Get a new online address for "${s.name}"? The old address stops working and friends will need the new one.`)) return;
+  await attempt(() => api.newAddress(s.id));
+  state.tunnels[s.id] = (await attempt(() => api.getTunnel(s.id))) || {};
+  renderOnlineBox();
+}
+
+// ---------- right-click menu and rename ----------
+
+function openMenu(event, id) {
+  event.preventDefault();
+  state.menuFor = id;
+  const menu = $('ctx-menu');
+  menu.classList.remove('hidden');
+  const { innerWidth, innerHeight } = window;
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, innerHeight - rect.height - 8)}px`;
+  menu.querySelector('button').focus();
+}
+
+function closeMenu() {
+  $('ctx-menu').classList.add('hidden');
+}
+
+async function runMenu(cmd) {
+  const id = state.menuFor;
+  closeMenu();
+  const s = state.servers.find((x) => x.id === id);
+  if (!s) return;
+  if (cmd === 'open') openServer(id);
+  if (cmd === 'settings') {
+    await openServer(id);
+    switchTab('settings');
+  }
+  if (cmd === 'folder') attempt(() => api.openFolder(id));
+  if (cmd === 'rename') {
+    state.renaming = id;
+    $('rename-input').value = s.name;
+    $('rename-modal').classList.remove('hidden');
+    $('rename-input').select();
+  }
+  if (cmd === 'delete') deleteServer(s);
+}
+
+async function deleteServer(s) {
+  if (['starting', 'running', 'stopping'].includes(s.status)) {
+    toast('Stop the server before deleting it.', true);
+    return;
+  }
+  if (!confirm(`Delete "${s.name}"?\n\nIts world, mods and settings will be permanently removed from this PC. This can't be undone.`)) return;
+  if (await attempt(async () => (await api.deleteServer(s.id), true))) {
+    if (state.selectedId === s.id) state.selectedId = null;
+    await refreshServers();
+    if (!state.selectedId) {
+      if (state.servers.length) openServer(state.servers[0].id);
+      else showView('empty');
+    }
+    toast(`Deleted ${s.name}`);
+  }
 }
 
 // ---------- tabs ----------
@@ -499,7 +610,12 @@ async function loadFriends() {
     needsList.replaceChildren(el('li', {}, 'Available once the server has finished installing.'));
   } else {
     const needs = await attempt(() => api.clientNeeds(id));
-    if (needs && id === state.selectedId) {
+    if (needs && id === state.selectedId && needs.loader === 'vanilla') {
+      needsList.replaceChildren(
+        el('li', {}, 'Minecraft ', el('strong', {}, needs.minecraft), ' (Java Edition)'),
+        el('li', {}, 'No mods. The normal Minecraft launcher works: pick version ', el('strong', {}, needs.minecraft), ' in Installations.')
+      );
+    } else if (needs && id === state.selectedId) {
       needsList.replaceChildren(
         el('li', {}, 'Minecraft ', el('strong', {}, needs.minecraft)),
         el('li', {}, el('strong', {}, loaderName(needs.loader, needs.loaderVersion)), ' (the mod loader, exact version)'),
@@ -507,6 +623,9 @@ async function loadFriends() {
       );
     }
   }
+  const vanilla = s.source && s.source.type === 'vanilla';
+  $('export-card').classList.toggle('hidden', vanilla);
+  $('check-card').classList.toggle('hidden', vanilla);
   $('export-mrpack').classList.toggle('hidden', !s.source || s.source.type === 'profile');
   $('export-cf').disabled = !s.installed;
   $('export-mrpack').disabled = !s.installed;
@@ -643,7 +762,11 @@ function wire() {
     refreshServers();
   };
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') $('eula-modal').classList.add('hidden');
+    if (e.key === 'Escape') {
+      $('eula-modal').classList.add('hidden');
+      $('rename-modal').classList.add('hidden');
+      closeMenu();
+    }
   });
 
   document.querySelectorAll('.tab').forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
@@ -668,15 +791,22 @@ function wire() {
       await attempt(() => api.playitUnlink());
     }
   };
-  $('delete-server').onclick = async () => {
+  $('delete-server').onclick = () => {
     const s = current();
-    if (!s || !confirm(`Delete "${s.name}"? Its world and all its files will be removed from this PC.`)) return;
-    if (await attempt(async () => (await api.deleteServer(s.id), true))) {
-      state.selectedId = null;
-      await refreshServers();
-      if (state.servers.length) openServer(state.servers[0].id);
-      else showView('empty');
-    }
+    if (s) deleteServer(s);
+  };
+  $('vanilla-continue').onclick = chooseVanilla;
+  document.querySelectorAll('#ctx-menu button').forEach((b) => (b.onclick = () => runMenu(b.dataset.cmd)));
+  document.addEventListener('click', (e) => {
+    if (!$('ctx-menu').contains(e.target)) closeMenu();
+  });
+  $('rename-cancel').onclick = () => $('rename-modal').classList.add('hidden');
+  $('rename-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $('rename-input').value.trim();
+    if (!name) return;
+    $('rename-modal').classList.add('hidden');
+    if (await attempt(() => api.update(state.renaming, { name }))) await refreshServers();
   };
 
   api.onConsole((id, line) => {
@@ -709,6 +839,10 @@ function wire() {
     state.playit = { ...p, linked: !['unlinked', 'linking'].includes(p.state) };
     renderPlayitPill();
     renderOnlineBox();
+  });
+  api.onTunnel((id, t) => {
+    state.tunnels[id] = t;
+    if (id === state.selectedId) renderOnlineBox();
   });
   api.onExport((id, p) => {
     if (id === state.selectedId) $('export-status').textContent = `Building the pack… ${p.done} of ${p.total} files`;

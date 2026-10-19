@@ -4,9 +4,9 @@
 // Flow (mirrors the official agent, github.com/playit-cloud/playit-agent):
 //   1. link():   make a claim code, the user approves it at playit.gg/claim/<code>,
 //                then exchange it for this PC's agent secret.
-//   2. start():  run the official playit agent with that secret.
-//   3. ensureTunnel(port): create (once) a Minecraft Java tunnel to localhost:<port>
-//                and return its public address.
+//   2. startAgent(): run the official playit agent with that secret.
+//   3. ensureTunnel(): create (once per server) a Minecraft Java tunnel to
+//                localhost:<port> and return its public address.
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
@@ -62,7 +62,8 @@ function verifySignature(exe) {
 
 /**
  * Events: 'status' ({ state, message, address?, claimUrl? }), 'log' (line)
- * States: 'unlinked' | 'linking' | 'starting' | 'online' | 'error' | 'stopped'
+ * States: 'unlinked' | 'linking' | 'running' | 'error' | 'stopped' (the agent;
+ * per-server tunnel state lives in ServerManager)
  */
 class Playit extends EventEmitter {
   constructor(dataRoot) {
@@ -164,31 +165,40 @@ class Playit extends EventEmitter {
     return api('/v1/agents/rundata', {}, this.readSecret());
   }
 
-  /** Find or create this PC's Minecraft Java tunnel to localhost:<port>. */
-  async ensureTunnel(port) {
+  /**
+   * Find or create the Minecraft Java tunnel for one server and point it at
+   * localhost:<port>. `tunnelId` is the tunnel saved for that server, if any.
+   * `claimed` lists tunnel ids other servers already use, so they are not taken over.
+   * Returns { tunnelId, address, notices }.
+   */
+  async ensureTunnel({ tunnelId, port, name, claimed = [] }) {
     const secret = this.readSecret();
     const data = await this.runData();
     const portOf = (t) => {
       const f = t.agent_config && t.agent_config.fields.find((x) => x.name === 'local_port');
       return f ? Number(f.value) : null;
     };
-    const mine = (t) => t.tunnel_type === 'minecraft-java';
-    let tunnel = data.tunnels.find(mine);
+    const isMc = (t) => t.tunnel_type === 'minecraft-java';
+    let tunnel = tunnelId && data.tunnels.find((t) => t.id === tunnelId);
+    if (!tunnel) {
+      // Adopt an unclaimed tunnel already pointing at this port (made before
+      // tunnels were saved per server, or by hand on playit.gg).
+      tunnel = data.tunnels.find((t) => isMc(t) && !claimed.includes(t.id) && portOf(t) === port);
+    }
     if (tunnel && portOf(tunnel) !== port) {
-      // Point the existing tunnel at this server's port instead of making another.
       await api(
         '/tunnels/update',
         { tunnel_id: tunnel.id, local_ip: '127.0.0.1', local_port: port, agent_id: data.agent_id, enabled: true },
         secret
       );
     }
-    if (!tunnel && !data.pending.some(mine)) {
+    if (!tunnel) {
       // playit's /v1/tunnels/create rejects agent-key requests ("failed to parse body"),
       // so use the older endpoint, which accepts them.
-      await api(
+      const created = await api(
         '/tunnels/create',
         {
-          name: TUNNEL_NAME,
+          name: `${TUNNEL_NAME}: ${name}`.slice(0, 60).replace(/[^ -~]/g, ''),
           tunnel_type: 'minecraft-java',
           port_type: 'tcp',
           port_count: 1,
@@ -200,57 +210,50 @@ class Playit extends EventEmitter {
         },
         secret
       );
+      tunnel = { id: created.id };
     }
+    const id = tunnel.id;
     // A new tunnel can take a little while to get its address.
     for (let i = 0; i < 30; i++) {
       const now = await this.runData();
-      tunnel = now.tunnels.find(mine);
-      if (tunnel && tunnel.display_address) return { address: tunnel.display_address, notices: now.notices || [] };
-      const pending = now.pending.find(mine);
+      const t = now.tunnels.find((x) => x.id === id);
+      if (t && t.display_address) return { tunnelId: id, address: t.display_address, notices: now.notices || [] };
+      const pending = now.pending.find((x) => x.id === id);
       if (pending && pending.status_msg) this.emit('log', `playit.gg: ${pending.status_msg}`);
       await sleep(2000);
     }
     throw new PlayitError('playit.gg did not give the tunnel an address in time. Try again in a minute.');
   }
 
-  /** Start the agent and make sure the tunnel points at `port`. Resolves with the public address. */
-  async start(port, log = (line) => this.emit('log', line)) {
-    if (!this.isLinked()) throw new PlayitError('Connect playit.gg first');
-    this.setState({ state: 'starting', message: 'Getting your online address…' });
+  /** Delete a tunnel, e.g. to get a new random address. */
+  async deleteTunnel(tunnelId) {
     try {
-      const exe = await this.ensureAgent(log);
-      if (!this.child) {
-        await fsp.mkdir(this.dir, { recursive: true });
-        const child = spawn(
-          exe,
-          ['--secret-path', this.secretFile, '--socket-path', '\\\\.\\pipe\\self-host-mc-playit'],
-          { windowsHide: true, cwd: this.dir }
-        );
-        this.child = child;
-        const forward = (d) => d.toString().split(/\r?\n/).filter(Boolean).forEach((l) => this.emit('log', l));
-        child.stdout.on('data', forward);
-        child.stderr.on('data', forward);
-        child.on('exit', (code) => {
-          if (this.child !== child) return;
-          this.child = null;
-          if (this.state.state === 'online' || this.state.state === 'starting') {
-            this.setState({ state: 'error', message: `The playit.gg agent stopped (code ${code}).` });
-          }
-        });
-      }
-      const { address, notices } = await this.ensureTunnel(port);
-      const warning = notices.find((n) => n.priority === 'Critical' || n.priority === 'High');
-      this.setState({
-        state: 'online',
-        message: warning ? warning.message : 'Friends can join with this address.',
-        address,
-        resolveLink: warning ? warning.resolve_link : null,
-      });
-      return address;
+      await api('/tunnels/delete', { tunnel_id: tunnelId }, this.readSecret());
     } catch (err) {
-      this.setState({ state: 'error', message: err.message });
-      throw err;
+      if (!(err.status === 'fail' && err.data === 'TunnelNotFound')) throw err;
     }
+  }
+
+  /** Start the playit agent if it is not running. It serves every tunnel of this PC. */
+  async startAgent(log = (line) => this.emit('log', line)) {
+    if (!this.isLinked()) throw new PlayitError('Connect playit.gg first');
+    const exe = await this.ensureAgent(log);
+    if (this.child) return;
+    await fsp.mkdir(this.dir, { recursive: true });
+    const child = spawn(exe, ['--secret-path', this.secretFile, '--socket-path', '\\\\.\\pipe\\self-host-mc-playit'], {
+      windowsHide: true,
+      cwd: this.dir,
+    });
+    this.child = child;
+    const forward = (d) => d.toString().split(/\r?\n/).filter(Boolean).forEach((l) => this.emit('log', l));
+    child.stdout.on('data', forward);
+    child.stderr.on('data', forward);
+    child.on('exit', (code) => {
+      if (this.child !== child) return;
+      this.child = null;
+      this.setState({ state: 'error', message: `The playit.gg agent stopped (code ${code}).` });
+    });
+    this.setState({ state: 'running', message: '' });
   }
 
   async stop() {
@@ -260,7 +263,7 @@ class Playit extends EventEmitter {
       child.kill();
       await new Promise((r) => (child.exitCode !== null ? r() : child.once('exit', r)));
     }
-    if (this.isLinked()) this.setState({ ...this.state, state: 'stopped', message: '' });
+    if (this.isLinked()) this.setState({ state: 'stopped', message: '' });
   }
 }
 
