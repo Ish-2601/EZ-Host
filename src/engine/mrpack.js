@@ -7,6 +7,7 @@ const AdmZip = require('adm-zip');
 const { download, fileHash, mapLimit } = require('./http');
 const { safeJoin } = require('./paths');
 const { findClientOnlyFiles } = require('./modrinth');
+const { pruneClientOnlyMods } = require('./mod-metadata');
 
 // The spec only allows pack files to come from these hosts.
 const ALLOWED_HOSTS = new Set([
@@ -82,7 +83,7 @@ function extractFolder(zip, prefix, serverDir) {
 /**
  * Install the pack at `mrpackPath` into `serverDir`.
  * `log(message)` reports progress text; `onProgress(done, total)` reports file counts.
- * Returns { name, versionId, minecraft, loader, loaderVersion }.
+ * Returns { name, versionId, minecraft, loader, loaderVersion, javaMin }.
  */
 async function installMrpack(mrpackPath, serverDir, { log = () => {}, onProgress = () => {} } = {}) {
   const zip = new AdmZip(mrpackPath);
@@ -99,20 +100,11 @@ async function installMrpack(mrpackPath, serverDir, { log = () => {}, onProgress
   const skipped = (index.files || []).length - files.length;
   if (skipped) log(`Skipping ${skipped} client-only file(s) marked by the pack`);
 
+  // Mods Modrinth knows are client-only but the pack did not mark. They are
+  // still downloaded, because another mod may require them; see below.
+  let clientOnly = new Set();
   try {
-    const hashes = files.map((f) => f.hashes && f.hashes.sha1).filter(Boolean);
-    const clientOnly = await findClientOnlyFiles(hashes);
-    const before = files.length;
-    files = files.filter((f) => !(f.hashes && f.hashes.sha1 && clientOnly.has(f.hashes.sha1.toLowerCase())));
-    for (const f of index.files || []) {
-      if (f.hashes && f.hashes.sha1 && clientOnly.has(f.hashes.sha1.toLowerCase())) {
-        // Remove leftovers from an earlier install of the same pack.
-        await fsp.rm(safeJoin(serverDir, f.path), { force: true });
-      }
-    }
-    if (before !== files.length) {
-      log(`Skipping ${before - files.length} more client-only mod(s) found via Modrinth`);
-    }
+    clientOnly = await findClientOnlyFiles(files.map((f) => f.hashes && f.hashes.sha1).filter(Boolean));
   } catch (err) {
     log(`Could not check mods against Modrinth (${err.message}); installing all of them`);
   }
@@ -149,10 +141,20 @@ async function installMrpack(mrpackPath, serverDir, { log = () => {}, onProgress
   const serverOnly = extractFolder(zip, 'server-overrides', serverDir);
   log(`Copied ${shared + serverOnly} config/override file(s)`);
 
+  const flagged = new Set(
+    files
+      .filter((f) => f.hashes && f.hashes.sha1 && clientOnly.has(f.hashes.sha1.toLowerCase()))
+      .map((f) => path.basename(f.path))
+  );
+  const pruned = pruneClientOnlyMods(path.join(serverDir, 'mods'), (fileName) => flagged.has(fileName));
+  if (pruned.removed.length) log(`Left out ${pruned.removed.length} client-only mod(s) the server does not need`);
+  if (pruned.kept.length) log(`Kept ${pruned.kept.length} client-only mod(s) that other mods require`);
+
   return {
     name: index.name,
     versionId: index.versionId,
     ...deps,
+    javaMin: pruned.javaMin,
   };
 }
 

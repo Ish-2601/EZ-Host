@@ -1,6 +1,6 @@
 // Electron main process: owns the ServerManager and exposes it to the UI over IPC.
 const path = require('path');
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
 const { ServerManager } = require('../engine/manager');
 const modrinth = require('../engine/modrinth');
 
@@ -32,6 +32,10 @@ function createWindow() {
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault());
+}
+
+function safeFileName(name) {
+  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim() || 'server';
 }
 
 function send(channel, ...args) {
@@ -77,6 +81,42 @@ function registerIpc() {
   handle('servers:delete', (id) => manager.remove(id));
   handle('servers:openFolder', (id) => shell.openPath(manager.serverDir(id)));
   handle('system:totalMemoryMb', () => Math.floor(require('os').totalmem() / 1024 / 1024));
+  handle('system:copy', (text) => clipboard.writeText(String(text)));
+
+  handle('profiles:list', () => manager.listProfiles());
+  handle('servers:createFromProfile', (opts) => manager.createFromProfile(opts));
+  handle('servers:checkProfile', (id, profileId) => manager.checkProfile(id, profileId));
+  handle('servers:joinInfo', (id) => manager.joinInfo(id));
+  handle('servers:clientNeeds', async (id) => {
+    const needs = await manager.clientNeeds(id);
+    return { ...needs, modCount: needs.mods.length, mods: undefined };
+  });
+  handle('servers:exportClientPack', async (id) => {
+    const config = manager.readConfig(id);
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save the pack for CurseForge',
+      defaultPath: path.join(app.getPath('downloads'), `${safeFileName(config.name)} (CurseForge).zip`),
+      filters: [{ name: 'CurseForge profile', extensions: ['zip'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await manager.exportClientPack(id, result.filePath, {
+      onProgress: (done, total) => send('server:export', id, { done, total }),
+    });
+    shell.showItemInFolder(result.filePath);
+    return result.filePath;
+  });
+  handle('servers:exportMrpack', async (id) => {
+    const config = manager.readConfig(id);
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save the Modrinth pack',
+      defaultPath: path.join(app.getPath('downloads'), `${safeFileName(config.name)}.mrpack`),
+      filters: [{ name: 'Modrinth modpack', extensions: ['mrpack'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await manager.exportMrpack(id, result.filePath);
+    shell.showItemInFolder(result.filePath);
+    return result.filePath;
+  });
 
   manager.on('console', (id, line) => send('server:console', id, line));
   manager.on('status', (id, status) => send('server:status', id, status));

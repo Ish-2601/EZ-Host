@@ -15,8 +15,13 @@ Early development. Working today:
 - Automatic loader install: Fabric, Quilt, Forge, NeoForge, or vanilla
 - Start, stop, and a live console you can type commands into
 - Basic settings: name, RAM, MOTD, max players, port, difficulty
+- Host a server from a CurseForge or Prism Launcher profile on this PC, so the server matches the game you play
+- "How to join" screen: server addresses with copy buttons, the exact Minecraft/loader/mod versions players need, and in-game steps
+- Check any CurseForge/Prism profile against a server (wrong loader version, missing mods)
+- Export a server's client pack as a CurseForge-importable .zip, or as a .mrpack
+- Client-only mods are left off the server, unless another mod requires them; Java is picked to satisfy both Minecraft and the mods
 
-Planned next: playit.gg tunnel so friends can join without port forwarding, CurseForge packs, backups, and an installer build.
+Planned next: playit.gg tunnel so friends can join without port forwarding, CurseForge modpack search, backups, and an installer build.
 
 ## Run it
 
@@ -35,6 +40,12 @@ The server engine has no Electron dependency, so it can be tested from the comma
 
 ```bash
 npm run test:engine -- "Cobblemon Official Modpack [Fabric]"
+```
+
+To build a server from a CurseForge/Prism profile on this PC the same way:
+
+```bash
+node scripts/profile-smoke.js "<profile name>"
 ```
 
 ## Layout

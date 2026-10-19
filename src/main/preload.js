@@ -27,6 +27,16 @@ contextBridge.exposeInMainWorld('api', {
   deleteServer: invoke('servers:delete'),
   openFolder: invoke('servers:openFolder'),
   totalMemoryMb: invoke('system:totalMemoryMb'),
+  copy: invoke('system:copy'),
+
+  listProfiles: invoke('profiles:list'),
+  createFromProfile: invoke('servers:createFromProfile'),
+  checkProfile: invoke('servers:checkProfile'),
+  joinInfo: invoke('servers:joinInfo'),
+  clientNeeds: invoke('servers:clientNeeds'),
+  exportClientPack: invoke('servers:exportClientPack'),
+  exportMrpack: invoke('servers:exportMrpack'),
+  onExport: subscribe('server:export'),
 
   onConsole: subscribe('server:console'),
   onStatus: subscribe('server:status'),

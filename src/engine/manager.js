@@ -3,6 +3,7 @@
 // It does not depend on Electron, so scripts and tests can drive it directly.
 const fs = require('fs');
 const fsp = require('fs/promises');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
@@ -15,6 +16,9 @@ const { requiredJavaVersion } = require('./minecraft');
 const { ensureJava } = require('./java');
 const { installLoader } = require('./loaders');
 const { ServerProcess } = require('./server-process');
+const launchers = require('./launchers');
+const clientPack = require('./client-pack');
+const { pruneClientOnlyMods } = require('./mod-metadata');
 
 const CONFIG_FILE = 'selfhost.json';
 
@@ -93,60 +97,146 @@ class ServerManager extends EventEmitter {
     const version = versions.find((v) => v.id === versionId);
     if (!version) throw new Error('That modpack version has no server-installable .mrpack file');
 
-    const id = this.newId(name || project.title);
-    await fsp.mkdir(this.serverDir(id), { recursive: true });
-    await this.writeConfig({
-      id,
-      name: name || project.title,
-      source: {
-        type: 'modrinth',
-        projectId: project.id,
-        slug: project.slug,
-        title: project.title,
-        iconUrl: project.iconUrl,
-        versionId: version.id,
-        versionNumber: version.versionNumber,
-      },
-      memoryMb,
-      eulaAccepted: false,
-      installed: false,
-      createdAt: new Date().toISOString(),
+    const id = await this.createConfig(name || project.title, memoryMb, {
+      type: 'modrinth',
+      projectId: project.id,
+      slug: project.slug,
+      title: project.title,
+      iconUrl: project.iconUrl,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
     });
-
     this.runInstall(id, async (log, progress) => {
-      const mrpack = path.join(this.paths.cache, 'packs', version.file.filename);
-      log(`Downloading ${version.file.filename}...`);
-      await download(version.file.url, mrpack, {
-        hashes: { sha512: version.file.hashes.sha512 },
-        onProgress: (d, t) => progress('Modpack', d, t),
-      });
-      return mrpack;
+      const mrpack = await this.downloadModrinthPack(version, progress, log);
+      return this.installPackFile(id, mrpack, log, progress);
     });
     return this.describe(id);
   }
 
   /** Create a server from a .mrpack file on disk and install it. */
   async createFromFile({ name, filePath, memoryMb = 4096 }) {
-    const id = this.newId(name || path.basename(filePath, '.mrpack'));
+    const base = path.basename(filePath, '.mrpack');
+    const id = await this.createConfig(name || base, memoryMb, { type: 'file', fileName: path.basename(filePath) });
+    this.runInstall(id, async (log, progress) => {
+      // Keep a copy so the client pack can be exported later.
+      const copy = path.join(this.paths.cache, 'packs', `${id}.mrpack`);
+      await fsp.mkdir(path.dirname(copy), { recursive: true });
+      await fsp.copyFile(filePath, copy);
+      return this.installPackFile(id, copy, log, progress);
+    });
+    return this.describe(id);
+  }
+
+  /**
+   * Create a server from a game profile on this PC (CurseForge, Prism), so the
+   * server runs exactly the mods that profile plays with.
+   */
+  async createFromProfile({ name, profileId, memoryMb = 4096 }) {
+    const profile = launchers.findProfile(profileId);
+    if (!profile.minecraft) throw new Error('Could not tell which Minecraft version that profile uses');
+    const id = await this.createConfig(name || profile.name, memoryMb, {
+      type: 'profile',
+      launcher: profile.launcher,
+      launcherName: profile.launcherName,
+      profileName: profile.name,
+      profileId: profile.id,
+      gameDir: profile.gameDir,
+      modpack: profile.modpack,
+    });
+    this.runInstall(id, async (log, progress) => {
+      const serverDir = this.serverDir(id);
+      log(`Copying mods and configs from ${profile.launcherName} profile "${profile.name}"...`);
+      const jars = await launchers.hashModJars(profile.gameDir);
+
+      let clientOnly = new Set();
+      try {
+        clientOnly = await modrinth.findClientOnlyFiles(jars.map((j) => j.sha1));
+      } catch (err) {
+        log(`Could not check mods against Modrinth (${err.message}); copying all of them`);
+      }
+      const modsDir = path.join(serverDir, 'mods');
+      await fsp.mkdir(modsDir, { recursive: true });
+      let done = 0;
+      for (const jar of jars) {
+        await fsp.copyFile(jar.path, path.join(modsDir, jar.fileName));
+        progress('Mods', ++done, jars.length);
+      }
+      const flagged = new Set(jars.filter((j) => clientOnly.has(j.sha1)).map((j) => j.fileName));
+      const pruned = pruneClientOnlyMods(modsDir, (fileName) => flagged.has(fileName));
+      if (pruned.removed.length) log(`Left out ${pruned.removed.length} client-only mod(s) the server does not need`);
+      if (pruned.kept.length) log(`Kept ${pruned.kept.length} client-only mod(s) that other mods require`);
+      log(`Copied ${jars.length - pruned.removed.length} mod(s) to the server`);
+
+      for (const folder of ['config', 'defaultconfigs', 'kubejs', 'scripts', 'global_packs']) {
+        const src = path.join(profile.gameDir, folder);
+        if (fs.existsSync(src)) await fsp.cp(src, path.join(serverDir, folder), { recursive: true });
+      }
+      return {
+        name: profile.modpack ? profile.modpack.name : profile.name,
+        versionId: profile.modpack ? profile.modpack.version : null,
+        minecraft: profile.minecraft,
+        loader: profile.loader,
+        loaderVersion: profile.loaderVersion,
+        javaMin: pruned.javaMin,
+        clientMods: jars.map((j) => ({ fileName: j.fileName, sha1: j.sha1 })),
+      };
+    });
+    return this.describe(id);
+  }
+
+  async createConfig(name, memoryMb, source) {
+    const id = this.newId(name);
     await fsp.mkdir(this.serverDir(id), { recursive: true });
     await this.writeConfig({
       id,
-      name: name || path.basename(filePath, '.mrpack'),
-      source: { type: 'file', fileName: path.basename(filePath) },
+      name,
+      source,
       memoryMb,
       eulaAccepted: false,
       installed: false,
       createdAt: new Date().toISOString(),
     });
-    this.runInstall(id, async () => filePath);
-    return this.describe(id);
+    return id;
+  }
+
+  async downloadModrinthPack(version, progress = () => {}, log = () => {}) {
+    const mrpack = path.join(this.paths.cache, 'packs', version.file.filename);
+    if (fs.existsSync(mrpack)) return mrpack;
+    log(`Downloading ${version.file.filename}...`);
+    await download(version.file.url, mrpack, {
+      hashes: { sha512: version.file.hashes.sha512 },
+      onProgress: (d, t) => progress('Modpack', d, t),
+    });
+    return mrpack;
+  }
+
+  async installPackFile(id, mrpack, log, progress) {
+    const pack = await installMrpack(mrpack, this.serverDir(id), {
+      log,
+      onProgress: (d, t) => progress('Mods', d, t),
+    });
+    return { ...pack, packFile: mrpack };
+  }
+
+  /** The .mrpack a server was built from, downloading it again if needed. */
+  async ensurePackFile(id) {
+    const config = this.readConfig(id);
+    if (config.packFile && fs.existsSync(config.packFile)) return config.packFile;
+    if (config.source.type !== 'modrinth') throw new Error('The modpack file for this server is missing');
+    const versions = await modrinth.getModpackVersions(config.source.projectId);
+    const version = versions.find((v) => v.id === config.source.versionId);
+    if (!version) throw new Error('That modpack version is no longer on Modrinth');
+    const packFile = await this.downloadModrinthPack(version);
+    await this.updateConfig(id, { packFile });
+    return packFile;
   }
 
   /**
-   * Run the shared install pipeline in the background. `getPack` returns the
-   * path of the .mrpack to install. Progress and errors arrive as 'install' events.
+   * Run the shared install pipeline in the background. `prepare` puts the
+   * mods in place and returns { name, versionId, minecraft, loader, loaderVersion, ... };
+   * this then installs Java and the loader. Progress and errors arrive as 'install' events.
    */
-  runInstall(id, getPack) {
+  runInstall(id, prepare) {
     this.installing.add(id);
     this.emit('status', id, 'installing');
     const lines = [];
@@ -159,33 +249,24 @@ class ServerManager extends EventEmitter {
 
     const work = (async () => {
       const serverDir = this.serverDir(id);
-      const mrpack = await getPack(log, progress);
-      const pack = await installMrpack(mrpack, serverDir, {
-        log,
-        onProgress: (d, t) => progress('Mods', d, t),
-      });
+      const { name, versionId, minecraft, loader, loaderVersion, javaMin = 0, ...extra } = await prepare(log, progress);
 
-      const required = await requiredJavaVersion(pack.minecraft);
+      // Some mods need a newer Java than Minecraft itself does.
+      const required = Math.max(await requiredJavaVersion(minecraft), javaMin);
       const { javaPath, major } = await ensureJava(required, this.paths.java, {
         log,
         onProgress: (d, t) => progress(`Java`, d, t),
       });
 
-      const launch = await installLoader({
-        serverDir,
-        minecraft: pack.minecraft,
-        loader: pack.loader,
-        loaderVersion: pack.loaderVersion,
-        javaPath,
-        log,
-      });
+      const launch = await installLoader({ serverDir, minecraft, loader, loaderVersion, javaPath, log });
 
       await this.updateConfig(id, {
-        packName: pack.name,
-        packVersion: pack.versionId,
-        minecraft: pack.minecraft,
-        loader: pack.loader,
-        loaderVersion: pack.loaderVersion,
+        ...extra,
+        packName: name,
+        packVersion: versionId,
+        minecraft,
+        loader,
+        loaderVersion,
         javaMajor: major,
         launch,
         installed: true,
@@ -209,6 +290,88 @@ class ServerManager extends EventEmitter {
         this.emit('changed');
       });
     return work;
+  }
+
+  // ---------- playing with friends ----------
+
+  /** What a player's game needs to join: { minecraft, loader, loaderVersion, mods }. */
+  async clientNeeds(id) {
+    const config = this.readConfig(id);
+    if (!config.installed) throw new Error('Server is not installed yet');
+    if (config.source.type === 'profile') {
+      return {
+        minecraft: config.minecraft,
+        loader: config.loader,
+        loaderVersion: config.loaderVersion,
+        mods: config.clientMods || [],
+      };
+    }
+    const fromPack = clientPack.clientModsFromMrpack(await this.ensurePackFile(id));
+    return { ...fromPack, minecraft: config.minecraft, loader: config.loader, loaderVersion: config.loaderVersion };
+  }
+
+  listProfiles() {
+    return launchers.listProfiles();
+  }
+
+  /** Check a game profile on this PC against the server. */
+  async checkProfile(id, profileId) {
+    return clientPack.compareProfile(await this.clientNeeds(id), launchers.findProfile(profileId));
+  }
+
+  /**
+   * Write a CurseForge-importable zip with everything a player's game needs
+   * for this server. `onProgress(done, total)` reports files copied.
+   */
+  async exportClientPack(id, outFile, { onProgress } = {}) {
+    const config = this.readConfig(id);
+    const staging = path.join(this.paths.cache, 'export', id);
+    const common = {
+      name: config.name,
+      version: config.packVersion,
+      minecraft: config.minecraft,
+      loader: config.loader,
+      loaderVersion: config.loaderVersion,
+      outFile,
+      staging,
+    };
+    if (config.source.type === 'profile') {
+      if (!fs.existsSync(config.source.gameDir)) {
+        throw new Error(`The ${config.source.launcherName} profile "${config.source.profileName}" is no longer on this PC`);
+      }
+      return clientPack.buildCurseForgeZip({
+        ...common,
+        addFiles: (overrides) => clientPack.addProfileFiles(config.source.gameDir, overrides),
+      });
+    }
+    const packFile = await this.ensurePackFile(id);
+    return clientPack.buildCurseForgeZip({
+      ...common,
+      addFiles: (overrides) =>
+        clientPack.addMrpackClientFiles(packFile, overrides, path.join(this.paths.cache, 'files'), onProgress),
+    });
+  }
+
+  /** Copy the original .mrpack, for Modrinth App or Prism players. */
+  async exportMrpack(id, outFile) {
+    await fsp.copyFile(await this.ensurePackFile(id), outFile);
+    return outFile;
+  }
+
+  /** Addresses players can use to join. */
+  joinInfo(id) {
+    const props = this.readProperties(id);
+    const port = Number(props['server-port']) || 25565;
+    const lan = [];
+    for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+      for (const a of addrs || []) {
+        if (a.family !== 'IPv4' || a.internal) continue;
+        // Skip virtual adapters (WSL, Hyper-V, VirtualBox, VPNs) that friends cannot reach.
+        if (/vEthernet|WSL|VirtualBox|VMware|Hyper-V|Loopback|Tailscale|ZeroTier/i.test(name)) continue;
+        lan.push({ adapter: name, address: `${a.address}:${port}` });
+      }
+    }
+    return { port, local: `localhost:${port}`, lan };
   }
 
   /** The user agreed to https://aka.ms/MinecraftEULA in the app. */

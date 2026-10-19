@@ -37,6 +37,12 @@
         <h2>New server</h2>
         <button id="import-file-btn" class="btn btn-ghost">Import .mrpack file…</button>
       </header>
+      <div id="profiles-section" class="hidden">
+        <h3>Use a game profile you already play</h3>
+        <p class="muted small">The server gets the same mods and mod loader as the profile, so your game matches it.</p>
+        <div id="profile-results" class="pack-grid"></div>
+        <h3 class="section-gap">Or pick a modpack from Modrinth</h3>
+      </div>
       <form id="search-form" class="search">
         <input id="search-input" type="search" placeholder="Search Modrinth modpacks (e.g. Cobblemon, Create, Better MC)" autocomplete="off" />
         <button class="btn btn-primary" type="submit">Search</button>
@@ -73,6 +79,30 @@
       </form>
     </section>
 
+    <!-- Host a server from a game profile -->
+    <section id="view-profile" class="view hidden">
+      <header class="view-header">
+        <button id="back-from-profile" class="btn btn-ghost">← Back</button>
+      </header>
+      <div class="pack-detail">
+        <div class="icon-fallback pack-icon-lg">⛏</div>
+        <div>
+          <h2 id="profile-title"></h2>
+          <p id="profile-desc" class="muted"></p>
+        </div>
+      </div>
+      <form id="profile-form" class="card form">
+        <label>Server name
+          <input id="profile-server-name" type="text" maxlength="64" required />
+        </label>
+        <label>Memory (RAM) for the server: <strong id="profile-ram-label"></strong>
+          <input id="profile-ram" type="range" min="2048" step="512" />
+        </label>
+        <div class="muted small">Mods that only change how the game looks (client-only) are left off the server automatically when Modrinth knows about them.</div>
+        <button class="btn btn-primary" type="submit">Create server</button>
+      </form>
+    </section>
+
     <!-- A server -->
     <section id="view-server" class="view hidden">
       <header class="server-header">
@@ -105,11 +135,60 @@
       </div>
 
       <nav class="tabs">
-        <button class="tab active" data-tab="console">Console</button>
+        <button class="tab active" data-tab="join">How to join</button>
+        <button class="tab" data-tab="console">Console</button>
         <button class="tab" data-tab="settings">Settings</button>
       </nav>
 
-      <div id="tab-console" class="tab-panel">
+      <div id="tab-join" class="tab-panel hidden">
+        <div class="card">
+          <h3>1. Server address</h3>
+          <div id="join-addresses" class="addresses"></div>
+          <p class="muted small">Friends outside your home network can't use these addresses yet. A free playit.gg online address is the next feature.</p>
+        </div>
+
+        <div class="card">
+          <h3>2. Get the same mods</h3>
+          <p>Each player's game must match the server exactly, or Minecraft shows a "Connection Lost" or "missing mod" error.</p>
+          <ul id="join-needs" class="needs"></ul>
+          <div id="join-modpack-hint" class="muted small hidden"></div>
+          <div class="row wrap">
+            <button id="export-cf" class="btn btn-primary">Export pack for CurseForge (.zip)</button>
+            <button id="export-mrpack" class="btn">Export for Modrinth App / Prism (.mrpack)</button>
+            <span id="export-status" class="muted small"></span>
+          </div>
+          <details class="howto">
+            <summary>How to import the pack in CurseForge</summary>
+            <ol>
+              <li>Send the .zip to your friend (or use it yourself).</li>
+              <li>In the CurseForge app, open Minecraft and click <strong>Create Custom Profile</strong>.</li>
+              <li>Click <strong>Import</strong> at the top of that window and choose the .zip.</li>
+              <li>Play from that new profile.</li>
+            </ol>
+          </details>
+
+          <div class="check">
+            <label class="grow">Check a profile on this PC
+              <select id="check-profile"></select>
+            </label>
+            <button id="check-btn" class="btn">Check</button>
+          </div>
+          <div id="check-result" class="check-result hidden"></div>
+        </div>
+
+        <div class="card">
+          <h3>3. Join in Minecraft</h3>
+          <ol class="steps">
+            <li>Press <strong>Start</strong> above and wait until the status says <strong>running</strong>.</li>
+            <li>Open Minecraft from the matching profile.</li>
+            <li>Click <strong>Multiplayer</strong>, then <strong>Add Server</strong>.</li>
+            <li>Paste the address from step 1 into <strong>Server Address</strong> and click <strong>Done</strong>.</li>
+            <li>Double-click the server in the list to join.</li>
+          </ol>
+        </div>
+      </div>
+
+      <div id="tab-console" class="tab-panel hidden">
         <pre id="console" class="console"></pre>
         <form id="command-form" class="command">
           <span class="prompt">&gt;</span>

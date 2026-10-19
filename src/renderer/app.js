@@ -65,7 +65,7 @@ async function attempt(fn) {
 }
 
 function showView(name) {
-  for (const v of ['empty', 'new', 'pack', 'server']) $(`view-${v}`).classList.toggle('hidden', v !== name);
+  for (const v of ['empty', 'new', 'pack', 'profile', 'server']) $(`view-${v}`).classList.toggle('hidden', v !== name);
 }
 
 function setupRamSlider(input, label, value) {
@@ -146,6 +146,59 @@ function openNewServer() {
   showView('new');
   $('search-input').focus();
   if (!$('search-results').children.length) search('');
+  loadProfiles();
+}
+
+// ---------- new server: from a game profile ----------
+
+async function loadProfiles() {
+  const profiles = (await attempt(() => api.listProfiles())) || [];
+  state.profiles = profiles;
+  const usable = profiles.filter((p) => p.minecraft && p.modCount > 0);
+  $('profiles-section').classList.toggle('hidden', usable.length === 0);
+  $('profile-results').replaceChildren(
+    ...usable.map((p) =>
+      el(
+        'button',
+        { class: 'pack-card profile-card', type: 'button', onclick: () => openProfile(p) },
+        el('div', { class: 'icon-fallback' }, '⛏'),
+        el('div', {},
+          el('div', { class: 'launcher' }, p.launcherName),
+          el('div', { class: 'title' }, p.name),
+          el('div', { class: 'tags' },
+            el('span', { class: 'tag' }, p.minecraft),
+            el('span', { class: 'tag' }, `${LOADER_NAMES[p.loader] || p.loader} ${p.loaderVersion || ''}`.trim()),
+            el('span', { class: 'tag' }, `${p.modCount} mods`)
+          )
+        )
+      )
+    )
+  );
+}
+
+function openProfile(profile) {
+  state.profile = profile;
+  showView('profile');
+  $('profile-title').textContent = profile.name;
+  $('profile-desc').textContent = `${profile.launcherName} profile · Minecraft ${profile.minecraft} · ${LOADER_NAMES[profile.loader] || profile.loader} ${profile.loaderVersion || ''} · ${profile.modCount} mods`;
+  $('profile-server-name').value = profile.name;
+  setupRamSlider($('profile-ram'), $('profile-ram-label'), 6144);
+}
+
+async function createFromProfile(event) {
+  event.preventDefault();
+  if (!state.profile) return;
+  const created = await attempt(() =>
+    api.createFromProfile({
+      name: $('profile-server-name').value.trim(),
+      profileId: state.profile.id,
+      memoryMb: Number($('profile-ram').value),
+    })
+  );
+  if (created) {
+    await refreshServers();
+    openServer(created.id);
+  }
 }
 
 // ---------- new server: choose version ----------
@@ -215,10 +268,10 @@ async function openServer(id) {
   state.selectedId = id;
   renderServerList();
   showView('server');
-  switchTab('console');
   const server = state.servers.find((s) => s.id === id) || (await attempt(() => api.getServer(id)));
   if (!server) return;
   renderServer(server);
+  switchTab(server.installed && server.status === 'stopped' ? 'join' : 'console');
   const history = (await attempt(() => api.getConsole(id))) || [];
   const consoleEl = $('console');
   consoleEl.replaceChildren();
@@ -293,9 +346,101 @@ function appendConsole(line) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  $('tab-console').classList.toggle('hidden', name !== 'console');
-  $('tab-settings').classList.toggle('hidden', name !== 'settings');
+  for (const tab of ['join', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
   if (name === 'settings') loadSettings();
+  if (name === 'join') loadJoin();
+}
+
+// ---------- how to join ----------
+
+async function loadJoin() {
+  const id = state.selectedId;
+  const s = state.servers.find((x) => x.id === id);
+  if (!s) return;
+  $('check-result').classList.add('hidden');
+  $('export-status').textContent = '';
+
+  const info = await attempt(() => api.joinInfo(id));
+  if (info && id === state.selectedId) {
+    const rows = [['Playing on this PC', info.local], ...info.lan.map((l) => ['Friends on your Wi-Fi / home network', l.address])];
+    $('join-addresses').replaceChildren(
+      ...rows.map(([who, address]) =>
+        el('div', { class: 'address' },
+          el('span', { class: 'who' }, who),
+          el('code', {}, address),
+          el('button', { class: 'btn', type: 'button', onclick: async () => {
+            await attempt(() => api.copy(address));
+            toast(`Copied ${address}`);
+          } }, 'Copy')
+        )
+      )
+    );
+  }
+
+  const needsList = $('join-needs');
+  if (!s.installed) {
+    needsList.replaceChildren(el('li', {}, 'Finish installing the server first.'));
+  } else {
+    const needs = await attempt(() => api.clientNeeds(id));
+    if (needs && id === state.selectedId) {
+      needsList.replaceChildren(
+        el('li', {}, 'Minecraft ', el('strong', {}, needs.minecraft)),
+        el('li', {}, 'Mod loader ', el('strong', {}, `${LOADER_NAMES[needs.loader] || needs.loader} ${needs.loaderVersion || ''}`.trim()), ' (the exact version matters)'),
+        el('li', {}, el('strong', {}, `${needs.modCount} mods`), ' from ', s.packName ? `${s.packName} ${s.packVersion || ''}`.trim() : s.name)
+      );
+    }
+  }
+  $('export-mrpack').classList.toggle('hidden', !s.source || s.source.type === 'profile');
+  $('export-cf').disabled = !s.installed;
+  $('export-mrpack').disabled = !s.installed;
+
+  const hint = $('join-modpack-hint');
+  const mp = s.source && s.source.modpack;
+  hint.classList.toggle('hidden', !mp);
+  if (mp) hint.textContent = `Friends who use CurseForge can also install "${mp.name}"${mp.version ? ` (${mp.version})` : ''} directly from CurseForge.`;
+
+  const profiles = state.profiles || (await attempt(() => api.listProfiles())) || [];
+  state.profiles = profiles;
+  const select = $('check-profile');
+  select.replaceChildren(
+    ...profiles.map((p) => el('option', { value: p.id }, `${p.name} (${p.launcherName}, ${p.minecraft || '?'}, ${p.modCount} mods)`))
+  );
+  $('check-btn').disabled = !profiles.length || !s.installed;
+  if (!profiles.length) select.replaceChildren(el('option', {}, 'No CurseForge or Prism profiles found on this PC'));
+}
+
+async function checkProfile() {
+  $('check-btn').disabled = true;
+  const result = await attempt(() => api.checkProfile(state.selectedId, $('check-profile').value));
+  $('check-btn').disabled = false;
+  if (!result) return;
+  const box = $('check-result');
+  const line = (ok, text) => el('div', { class: ok ? 'ok' : 'bad' }, `${ok ? '✓' : '✗'} ${text}`);
+  const items = [
+    line(result.minecraft.ok, `Minecraft: needs ${result.minecraft.need}, profile has ${result.minecraft.have}`),
+    line(result.loader.versionOk, `Mod loader: needs ${result.loader.need}, profile has ${result.loader.have}`),
+    line(result.missing.length === 0, result.missing.length ? `${result.missing.length} mod(s) missing from the profile` : 'All server mods are in the profile'),
+  ];
+  if (result.missing.length) {
+    items.push(el('details', {}, el('summary', {}, 'Show missing mods'), el('ul', {}, result.missing.map((m) => el('li', {}, m)))));
+  }
+  if (result.extra.length) {
+    items.push(el('details', {}, el('summary', {}, `${result.extra.length} extra mod(s) in the profile (usually fine if they are client-only)`), el('ul', {}, result.extra.map((m) => el('li', {}, m)))));
+  }
+  items.push(
+    el('div', {}, result.ready
+      ? 'This profile is ready to join the server.'
+      : 'This profile will not be able to join. Export the pack for CurseForge above and import it as a new profile.')
+  );
+  box.replaceChildren(...items);
+  box.classList.remove('hidden');
+}
+
+async function exportPack(kind) {
+  const id = state.selectedId;
+  $('export-status').textContent = kind === 'cf' ? 'Building the pack…' : '';
+  const file = await attempt(() => (kind === 'cf' ? api.exportClientPack(id) : api.exportMrpack(id)));
+  $('export-status').textContent = file ? `Saved to ${file}` : '';
 }
 
 async function loadSettings() {
@@ -347,6 +492,14 @@ function wire() {
   };
   $('back-to-search').onclick = () => showView('new');
   $('create-form').onsubmit = createServer;
+  $('back-from-profile').onclick = () => showView('new');
+  $('profile-form').onsubmit = createFromProfile;
+  $('check-btn').onclick = checkProfile;
+  $('export-cf').onclick = () => exportPack('cf');
+  $('export-mrpack').onclick = () => exportPack('mrpack');
+  api.onExport((id, p) => {
+    if (id === state.selectedId) $('export-status').textContent = `Building the pack… ${p.done}/${p.total} files`;
+  });
 
   $('srv-start').onclick = () => attempt(() => api.start(state.selectedId));
   $('srv-stop').onclick = () => attempt(() => api.stop(state.selectedId));
