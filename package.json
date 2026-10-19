@@ -1,0 +1,19 @@
+{
+  "name": "self-host-mc",
+  "version": "0.1.0",
+  "description": "Host a modded Minecraft server on your own PC so friends can join.",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test:engine": "node scripts/engine-smoke.js"
+  },
+  "author": "Ish-2601",
+  "license": "MIT",
+  "dependencies": {
+    "adm-zip": "^0.6.1"
+  },
+  "devDependencies": {
+    "electron": "^44.9.0"
+  }
+}

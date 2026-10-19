@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' https://cdn.modrinth.com data:; style-src 'self'; script-src 'self'" />
+  <title>Self-Host MC</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">⛏</div>
+      <div>
+        <div class="brand-name">Self-Host MC</div>
+        <div class="brand-sub">Your PC, your server</div>
+      </div>
+    </div>
+    <button id="new-server-btn" class="btn btn-primary btn-block">+ New server</button>
+    <div class="sidebar-label">Servers</div>
+    <ul id="server-list" class="server-list"></ul>
+  </aside>
+
+  <main id="main" class="main">
+    <!-- Empty state -->
+    <section id="view-empty" class="view">
+      <div class="empty">
+        <h1>Host a modded Minecraft server</h1>
+        <p>Pick any modpack from Modrinth. Java and the mod loader install automatically, and the server runs on this PC so friends can play even when you are not in game.</p>
+        <button class="btn btn-primary" data-action="new-server">Choose a modpack</button>
+      </div>
+    </section>
+
+    <!-- New server: search Modrinth -->
+    <section id="view-new" class="view hidden">
+      <header class="view-header">
+        <h2>New server</h2>
+        <button id="import-file-btn" class="btn btn-ghost">Import .mrpack file…</button>
+      </header>
+      <form id="search-form" class="search">
+        <input id="search-input" type="search" placeholder="Search Modrinth modpacks (e.g. Cobblemon, Create, Better MC)" autocomplete="off" />
+        <button class="btn btn-primary" type="submit">Search</button>
+      </form>
+      <div id="search-status" class="muted"></div>
+      <div id="search-results" class="pack-grid"></div>
+    </section>
+
+    <!-- Pick a version of the chosen pack -->
+    <section id="view-pack" class="view hidden">
+      <header class="view-header">
+        <button id="back-to-search" class="btn btn-ghost">← Back</button>
+      </header>
+      <div class="pack-detail">
+        <img id="pack-icon" class="pack-icon-lg" alt="" />
+        <div>
+          <h2 id="pack-title"></h2>
+          <p id="pack-desc" class="muted"></p>
+        </div>
+      </div>
+      <form id="create-form" class="card form">
+        <label>Modpack version
+          <select id="pack-version"></select>
+        </label>
+        <div id="version-meta" class="muted small"></div>
+        <label>Server name
+          <input id="server-name" type="text" maxlength="64" required />
+        </label>
+        <label>Memory (RAM) for the server: <strong id="ram-label"></strong>
+          <input id="server-ram" type="range" min="2048" step="512" />
+        </label>
+        <div class="muted small">Most modpacks want 4–8 GB. Leave enough for Windows and anything else you run.</div>
+        <button class="btn btn-primary" type="submit">Create server</button>
+      </form>
+    </section>
+
+    <!-- A server -->
+    <section id="view-server" class="view hidden">
+      <header class="server-header">
+        <img id="srv-icon" class="pack-icon-md" alt="" />
+        <div class="server-title">
+          <h2 id="srv-name"></h2>
+          <div id="srv-meta" class="muted small"></div>
+        </div>
+        <span id="srv-status" class="status-pill"></span>
+        <div class="server-actions">
+          <button id="srv-start" class="btn btn-primary">Start</button>
+          <button id="srv-stop" class="btn btn-danger">Stop</button>
+        </div>
+      </header>
+
+      <div id="srv-install" class="card hidden">
+        <div class="progress-label" id="srv-progress-label">Installing…</div>
+        <div class="progress"><div id="srv-progress-bar" class="progress-bar"></div></div>
+      </div>
+
+      <div id="srv-error" class="notice notice-error hidden"></div>
+
+      <div id="srv-eula" class="notice hidden">
+        <div>
+          Minecraft servers require agreeing to the
+          <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noreferrer">Minecraft End User License Agreement</a>.
+        </div>
+        <label class="checkbox"><input id="eula-check" type="checkbox" /> I have read and agree to the Minecraft EULA</label>
+        <button id="eula-accept" class="btn btn-primary" disabled>Agree and continue</button>
+      </div>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="console">Console</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </nav>
+
+      <div id="tab-console" class="tab-panel">
+        <pre id="console" class="console"></pre>
+        <form id="command-form" class="command">
+          <span class="prompt">&gt;</span>
+          <input id="command-input" type="text" placeholder="Type a server command, e.g. say hello or op YourName" autocomplete="off" />
+          <button class="btn" type="submit">Send</button>
+        </form>
+      </div>
+
+      <div id="tab-settings" class="tab-panel hidden">
+        <form id="settings-form" class="card form">
+          <label>Server name <input id="set-name" type="text" maxlength="64" /></label>
+          <label>Memory (RAM): <strong id="set-ram-label"></strong>
+            <input id="set-ram" type="range" min="2048" step="512" />
+          </label>
+          <div class="grid-2">
+            <label>Message of the day <input id="set-motd" type="text" /></label>
+            <label>Max players <input id="set-maxplayers" type="number" min="1" max="200" /></label>
+            <label>Port <input id="set-port" type="number" min="1024" max="65535" /></label>
+            <label>Difficulty
+              <select id="set-difficulty">
+                <option value="peaceful">Peaceful</option>
+                <option value="easy">Easy</option>
+                <option value="normal">Normal</option>
+                <option value="hard">Hard</option>
+              </select>
+            </label>
+          </div>
+          <div class="muted small" id="settings-hint">Game settings apply the next time the server starts. They appear after the server has run once.</div>
+          <div class="row">
+            <button class="btn btn-primary" type="submit">Save</button>
+            <span id="settings-saved" class="muted small"></span>
+          </div>
+        </form>
+        <div class="card row">
+          <button id="open-folder" class="btn">Open server folder</button>
+          <span class="spacer"></span>
+          <button id="delete-server" class="btn btn-danger">Delete server</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

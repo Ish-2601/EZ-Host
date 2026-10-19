@@ -1,0 +1,305 @@
+// ServerManager ties the engine together: it creates servers from modpacks,
+// installs Java and the loader, and starts/stops server processes.
+// It does not depend on Electron, so scripts and tests can drive it directly.
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
+const crypto = require('crypto');
+const { EventEmitter } = require('events');
+
+const { dataPaths } = require('./paths');
+const { download } = require('./http');
+const modrinth = require('./modrinth');
+const { installMrpack } = require('./mrpack');
+const { requiredJavaVersion } = require('./minecraft');
+const { ensureJava } = require('./java');
+const { installLoader } = require('./loaders');
+const { ServerProcess } = require('./server-process');
+
+const CONFIG_FILE = 'selfhost.json';
+
+/**
+ * Events:
+ *   'console'  (serverId, { text, stream })
+ *   'status'   (serverId, status)
+ *   'install'  (serverId, { message?, progress?: { label, done, total } })
+ *   'changed'  ()  the server list or a server's config changed
+ */
+class ServerManager extends EventEmitter {
+  constructor(dataRoot) {
+    super();
+    this.paths = dataPaths(dataRoot);
+    this.processes = new Map();
+    this.installing = new Set();
+    this.installLogs = new Map();
+    fs.mkdirSync(this.paths.servers, { recursive: true });
+  }
+
+  serverDir(id) {
+    if (!/^[a-z0-9-]+$/.test(id)) throw new Error('Invalid server id');
+    return path.join(this.paths.servers, id);
+  }
+
+  readConfig(id) {
+    const file = path.join(this.serverDir(id), CONFIG_FILE);
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
+
+  async writeConfig(config) {
+    const file = path.join(this.serverDir(config.id), CONFIG_FILE);
+    await fsp.writeFile(file, JSON.stringify(config, null, 2));
+    this.emit('changed');
+    return config;
+  }
+
+  async updateConfig(id, patch) {
+    return this.writeConfig({ ...this.readConfig(id), ...patch });
+  }
+
+  list() {
+    if (!fs.existsSync(this.paths.servers)) return [];
+    return fs
+      .readdirSync(this.paths.servers)
+      .filter((id) => fs.existsSync(path.join(this.paths.servers, id, CONFIG_FILE)))
+      .map((id) => this.describe(id))
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+
+  describe(id) {
+    const config = this.readConfig(id);
+    const proc = this.processes.get(id);
+    let status = proc ? proc.status : 'stopped';
+    if (this.installing.has(id)) status = 'installing';
+    return { ...config, status, dir: this.serverDir(id) };
+  }
+
+  /** Install messages followed by the running server's console lines. */
+  consoleHistory(id) {
+    const proc = this.processes.get(id);
+    return [...(this.installLogs.get(id) || []), ...(proc ? proc.history : [])];
+  }
+
+  newId(name) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'server';
+    return `${slug}-${crypto.randomBytes(3).toString('hex')}`;
+  }
+
+  /** Create a server from a Modrinth modpack version and install it. */
+  async createFromModrinth({ name, projectId, versionId, memoryMb = 4096 }) {
+    const [project, versions] = await Promise.all([
+      modrinth.getProject(projectId),
+      modrinth.getModpackVersions(projectId),
+    ]);
+    const version = versions.find((v) => v.id === versionId);
+    if (!version) throw new Error('That modpack version has no server-installable .mrpack file');
+
+    const id = this.newId(name || project.title);
+    await fsp.mkdir(this.serverDir(id), { recursive: true });
+    await this.writeConfig({
+      id,
+      name: name || project.title,
+      source: {
+        type: 'modrinth',
+        projectId: project.id,
+        slug: project.slug,
+        title: project.title,
+        iconUrl: project.iconUrl,
+        versionId: version.id,
+        versionNumber: version.versionNumber,
+      },
+      memoryMb,
+      eulaAccepted: false,
+      installed: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    this.runInstall(id, async (log, progress) => {
+      const mrpack = path.join(this.paths.cache, 'packs', version.file.filename);
+      log(`Downloading ${version.file.filename}...`);
+      await download(version.file.url, mrpack, {
+        hashes: { sha512: version.file.hashes.sha512 },
+        onProgress: (d, t) => progress('Modpack', d, t),
+      });
+      return mrpack;
+    });
+    return this.describe(id);
+  }
+
+  /** Create a server from a .mrpack file on disk and install it. */
+  async createFromFile({ name, filePath, memoryMb = 4096 }) {
+    const id = this.newId(name || path.basename(filePath, '.mrpack'));
+    await fsp.mkdir(this.serverDir(id), { recursive: true });
+    await this.writeConfig({
+      id,
+      name: name || path.basename(filePath, '.mrpack'),
+      source: { type: 'file', fileName: path.basename(filePath) },
+      memoryMb,
+      eulaAccepted: false,
+      installed: false,
+      createdAt: new Date().toISOString(),
+    });
+    this.runInstall(id, async () => filePath);
+    return this.describe(id);
+  }
+
+  /**
+   * Run the shared install pipeline in the background. `getPack` returns the
+   * path of the .mrpack to install. Progress and errors arrive as 'install' events.
+   */
+  runInstall(id, getPack) {
+    this.installing.add(id);
+    this.emit('status', id, 'installing');
+    const lines = [];
+    this.installLogs.set(id, lines);
+    const log = (message) => {
+      lines.push({ text: message, stream: 'system', time: Date.now() });
+      this.emit('install', id, { message });
+    };
+    const progress = (label, done, total) => this.emit('install', id, { progress: { label, done, total } });
+
+    const work = (async () => {
+      const serverDir = this.serverDir(id);
+      const mrpack = await getPack(log, progress);
+      const pack = await installMrpack(mrpack, serverDir, {
+        log,
+        onProgress: (d, t) => progress('Mods', d, t),
+      });
+
+      const required = await requiredJavaVersion(pack.minecraft);
+      const { javaPath, major } = await ensureJava(required, this.paths.java, {
+        log,
+        onProgress: (d, t) => progress(`Java`, d, t),
+      });
+
+      const launch = await installLoader({
+        serverDir,
+        minecraft: pack.minecraft,
+        loader: pack.loader,
+        loaderVersion: pack.loaderVersion,
+        javaPath,
+        log,
+      });
+
+      await this.updateConfig(id, {
+        packName: pack.name,
+        packVersion: pack.versionId,
+        minecraft: pack.minecraft,
+        loader: pack.loader,
+        loaderVersion: pack.loaderVersion,
+        javaMajor: major,
+        launch,
+        installed: true,
+        installError: null,
+      });
+      log('Install complete. Accept the Minecraft EULA, then press Start.');
+    })();
+
+    work
+      .catch(async (err) => {
+        log(`Install failed: ${err.message}`);
+        try {
+          await this.updateConfig(id, { installError: err.message });
+        } catch {
+          // Config may be gone if the server was deleted mid-install.
+        }
+      })
+      .finally(() => {
+        this.installing.delete(id);
+        this.emit('status', id, 'stopped');
+        this.emit('changed');
+      });
+    return work;
+  }
+
+  /** The user agreed to https://aka.ms/MinecraftEULA in the app. */
+  async acceptEula(id) {
+    await fsp.writeFile(
+      path.join(this.serverDir(id), 'eula.txt'),
+      `# Accepted in Self-Host MC on ${new Date().toISOString()}\n# https://aka.ms/MinecraftEULA\neula=true\n`
+    );
+    return this.updateConfig(id, { eulaAccepted: true });
+  }
+
+  async start(id) {
+    const config = this.readConfig(id);
+    if (this.installing.has(id)) throw new Error('Server is still installing');
+    if (!config.installed) throw new Error('Server is not installed');
+    if (!config.eulaAccepted) throw new Error('Accept the Minecraft EULA before starting the server');
+    const existing = this.processes.get(id);
+    if (existing && existing.child) throw new Error('Server is already running');
+
+    const { javaPath } = await ensureJava(config.javaMajor, this.paths.java, {
+      log: (message) => this.emit('console', id, { text: message, stream: 'system' }),
+    });
+    const proc = new ServerProcess({
+      javaPath,
+      serverDir: this.serverDir(id),
+      launch: config.launch,
+      memoryMb: config.memoryMb,
+    });
+    proc.on('line', (text, stream) => this.emit('console', id, { text, stream }));
+    proc.on('status', (status) => this.emit('status', id, status));
+    this.processes.set(id, proc);
+    proc.start();
+    return this.describe(id);
+  }
+
+  async stop(id) {
+    const proc = this.processes.get(id);
+    if (proc) await proc.stop();
+  }
+
+  sendCommand(id, command) {
+    const proc = this.processes.get(id);
+    if (!proc || !proc.child) throw new Error('Server is not running');
+    proc.send(command);
+  }
+
+  async remove(id) {
+    if (this.installing.has(id)) throw new Error('Wait for the install to finish first');
+    const proc = this.processes.get(id);
+    if (proc && proc.child) throw new Error('Stop the server before deleting it');
+    this.processes.delete(id);
+    await fsp.rm(this.serverDir(id), { recursive: true, force: true });
+    this.emit('changed');
+  }
+
+  /** Stop every running server; used when the app quits. */
+  async stopAll() {
+    await Promise.all([...this.processes.values()].map((p) => p.stop()));
+  }
+
+  readProperties(id) {
+    const file = path.join(this.serverDir(id), 'server.properties');
+    if (!fs.existsSync(file)) return {};
+    const props = {};
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      if (!line || line.startsWith('#')) continue;
+      const i = line.indexOf('=');
+      if (i > 0) props[line.slice(0, i)] = line.slice(i + 1);
+    }
+    return props;
+  }
+
+  /** Update keys in server.properties, keeping other lines and comments as they are. */
+  async writeProperties(id, patch) {
+    const file = path.join(this.serverDir(id), 'server.properties');
+    const lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/) : [];
+    const remaining = { ...patch };
+    const out = lines.map((line) => {
+      const i = line.indexOf('=');
+      if (line.startsWith('#') || i <= 0) return line;
+      const key = line.slice(0, i);
+      if (key in remaining) {
+        const value = remaining[key];
+        delete remaining[key];
+        return `${key}=${value}`;
+      }
+      return line;
+    });
+    for (const [key, value] of Object.entries(remaining)) out.push(`${key}=${value}`);
+    await fsp.writeFile(file, out.join('\n').replace(/\n*$/, '\n'));
+  }
+}
+
+module.exports = { ServerManager };
