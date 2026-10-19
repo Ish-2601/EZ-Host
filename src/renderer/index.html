@@ -215,6 +215,20 @@
       </div>
 
       <div id="tab-players" class="tab-panel hidden">
+        <div class="card">
+          <div class="map-head">
+            <h3>Who can join</h3>
+            <span class="spacer"></span>
+            <label class="checkbox"><input id="wl-enabled" type="checkbox" /> Only players on this list (recommended)</label>
+          </div>
+          <p id="wl-help" class="muted small"></p>
+          <div id="wl-refused" class="wl-refused hidden"></div>
+          <form id="wl-form" class="row">
+            <input id="wl-name" type="text" maxlength="16" placeholder="Minecraft username" autocomplete="off" />
+            <button class="btn btn-primary" type="submit">Add</button>
+          </form>
+          <ul id="wl-list" class="wl-list"></ul>
+        </div>
         <div class="players-layout">
           <div class="card player-list-card">
             <h3>Players</h3>
@@ -322,6 +336,19 @@
       <div class="row end">
         <button id="rename-cancel" type="button" class="btn btn-ghost">Cancel</button>
         <button type="submit" class="btn btn-primary">Rename</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Asked once: the host's Minecraft name, so they are put on each server's whitelist -->
+  <div id="host-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="host-title">
+    <form id="host-form" class="modal-box">
+      <h2 id="host-title">What's your Minecraft username?</h2>
+      <p class="muted">Your servers only let in players on their list, because anyone could find an online address. You'll be added to each server's list automatically.</p>
+      <input id="host-input" type="text" maxlength="16" required autocomplete="off" />
+      <div class="row end">
+        <button id="host-cancel" type="button" class="btn btn-ghost">Cancel</button>
+        <button type="submit" class="btn btn-primary">Continue</button>
       </div>
     </form>
   </div>

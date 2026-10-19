@@ -77,6 +77,7 @@ Status: all six are built (2026-10-19). Tested on a throwaway server: pregenerat
 | A separate online address for each server: one playit.gg tunnel per server, each server on its own port. "Get a new address" picks a fresh one; custom names need playit.gg Premium or your own domain, and the app explains this | Different groups or worlds can be shared without mixing them up. |
 | Pregenerate world button (using the Chunky mod): pick a radius, watch progress | Generating new chunks is the main cause of lag on modded servers. Pregenerating while nobody plays removes it. |
 | Players panel: head, hearts, hunger, inventory and ender chest for online and offline players, plus editing (heal, feed, give or remove items, game mode, op, kick) | Hosts want to see and help their players without typing commands. |
+| Whitelist control on the Players tab (on by default, host added automatically, "Allow" for anyone turned away). Minecraft 26.3 turns the whitelist on by default, which blocked the host | Every server has a public address, so only invited players should get in. |
 | World map of explored chunks with live player heads. Select chunks to keep them loaded even with nobody nearby (for farms), and remove that again | Lets the host see the world and keep iron farms and similar builds running. |
 
 ## Phase 2: reliability

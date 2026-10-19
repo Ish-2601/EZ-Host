@@ -113,6 +113,12 @@ function registerIpc() {
   handle('servers:tunnel', (id) => manager.tunnelStatus(id));
   handle('servers:pregen', (id) => manager.pregenStatus(id));
   handle('players:list', (id) => manager.listPlayersWithNames(id));
+  handle('whitelist:status', (id) => manager.whitelistStatus(id));
+  handle('whitelist:add', (id, name) => manager.whitelistAdd(id, name));
+  handle('whitelist:remove', (id, name) => manager.whitelistRemove(id, name));
+  handle('whitelist:enable', (id, on) => manager.setWhitelistEnabled(id, Boolean(on)));
+  handle('settings:hostName', () => manager.hostName());
+  handle('settings:setHostName', (name) => manager.setHostName(name));
   handle('map:dimensions', (id) => manager.mapDimensions(id));
   handle('map:regions', (id, dim) => manager.mapRegions(id, dim));
   handle('map:tile', (id, dim, rx, rz) => manager.mapTile(id, dim, rx, rz));
@@ -176,6 +182,7 @@ function registerIpc() {
   manager.on('players', (id, players) => send('server:players', id, players));
   manager.on('tunnel', (id, state) => send('server:tunnel', id, state));
   manager.on('pregen', (id, state) => send('server:pregen', id, state));
+  manager.on('whitelist', (id, state) => send('server:whitelist', id, state));
 }
 
 app.whenReady().then(() => {

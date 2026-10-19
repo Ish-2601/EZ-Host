@@ -542,8 +542,53 @@ async function newAddress(s) {
 
 const headUrl = (uuid, size = 64) => `https://mc-heads.net/avatar/${uuid}/${size}`;
 
+// ---------- whitelist ----------
+
+async function loadWhitelist() {
+  const id = state.selectedId;
+  const wl = await attempt(() => api.whitelistStatus(id));
+  if (wl && id === state.selectedId) renderWhitelist(wl);
+}
+
+function renderWhitelist(wl) {
+  const s = current();
+  if (!s) return;
+  $('wl-enabled').checked = wl.enabled;
+  $('wl-help').textContent = wl.enabled
+    ? 'Only the players below can join. Anyone else is turned away, even if they have the address.'
+    : 'Anyone with the address can join. Turn the list on to choose who gets in.';
+  const remove = (name) => async () => {
+    if (await attempt(async () => (await api.whitelistRemove(s.id, name), true))) loadWhitelist();
+  };
+  fill($('wl-list'),
+    wl.players.length ? null : el('li', { class: 'muted' }, 'Nobody yet. Add your own username first.'),
+    wl.players.map((p) => el('li', {},
+      el('img', { src: headUrl(p.uuid || p.name, 24), alt: '' }),
+      p.name,
+      el('button', { type: 'button', title: `Remove ${p.name}`, onclick: remove(p.name) }, '×')
+    ))
+  );
+  const refused = wl.refused.filter((n) => !wl.players.some((p) => p.name.toLowerCase() === n.toLowerCase()));
+  $('wl-refused').classList.toggle('hidden', !refused.length);
+  fill($('wl-refused'),
+    el('span', {}, 'Tried to join but not on the list:'),
+    refused.map((name) => el('button', { class: 'btn btn-primary', type: 'button', onclick: () => addToWhitelist(name) }, `Allow ${name}`))
+  );
+}
+
+async function addToWhitelist(name) {
+  const id = state.selectedId;
+  if (await attempt(async () => (await api.whitelistAdd(id, name), true))) {
+    toast(`${name} can now join`);
+    loadWhitelist();
+    return true;
+  }
+  return false;
+}
+
 async function loadPlayers() {
   const id = state.selectedId;
+  loadWhitelist();
   const list = (await attempt(() => api.listPlayers(id))) || [];
   if (id !== state.selectedId) return;
   state.playerList = list;
@@ -638,6 +683,11 @@ async function showPlayer(uuid, { quiet = false } = {}) {
   document.querySelectorAll('#player-list li').forEach((li, i) => li.classList.toggle('active', state.playerList[i] && state.playerList[i].uuid === uuid));
   const id = state.selectedId;
   const box = $('player-detail');
+  const known = state.playerList.find((p) => p.uuid === uuid);
+  if (known && !known.online && !known.hasData) {
+    fill(box, el('div', { class: 'player-head' }, el('img', { src: headUrl(uuid, 72), alt: '' }), el('div', {}, el('h2', {}, known.name || uuid), el('div', { class: 'meta' }, 'Has not played on this server yet, so there is nothing to show.'))));
+    return;
+  }
   if (!quiet) fill(box, el('p', { class: 'muted' }, 'Loading…'));
   const d = quiet ? await api.playerDetails(id, uuid).catch(() => null) : await attempt(() => api.playerDetails(id, uuid));
   if (!d || id !== state.selectedId || uuid !== state.playerUuid) {
@@ -1005,6 +1055,14 @@ async function saveSettings(event) {
 async function startServer() {
   const s = current();
   if (!s) return;
+  // Ask once for the host's username so they are put on each server's whitelist.
+  const host = await attempt(() => api.hostName());
+  if (host && !host.saved) {
+    $('host-input').value = host.name || '';
+    $('host-modal').classList.remove('hidden');
+    $('host-input').select();
+    return;
+  }
   if (!s.eulaAccepted) {
     $('eula-check').checked = false;
     $('eula-accept').disabled = true;
@@ -1043,6 +1101,7 @@ function wire() {
     if (e.key === 'Escape') {
       $('eula-modal').classList.add('hidden');
       $('rename-modal').classList.add('hidden');
+      $('host-modal').classList.add('hidden');
       closeMenu();
     }
   });
@@ -1074,6 +1133,32 @@ function wire() {
     if (s) deleteServer(s);
   };
   $('vanilla-continue').onclick = chooseVanilla;
+  $('host-cancel').onclick = () => $('host-modal').classList.add('hidden');
+  $('host-form').onsubmit = async (e) => {
+    e.preventDefault();
+    if (await attempt(async () => (await api.setHostName($('host-input').value.trim()), true))) {
+      $('host-modal').classList.add('hidden');
+      startServer();
+    }
+  };
+  $('wl-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $('wl-name').value.trim();
+    if (name && (await addToWhitelist(name))) $('wl-name').value = '';
+  };
+  $('wl-enabled').onchange = async (e) => {
+    const on = e.target.checked;
+    if (!on && !confirm('Turn off the list? Anyone who has the address will be able to join.')) {
+      e.target.checked = true;
+      return;
+    }
+    await attempt(() => api.whitelistEnable(state.selectedId, on));
+    loadWhitelist();
+  };
+  api.onWhitelist((id, wl) => {
+    if (id === state.selectedId) renderWhitelist(wl);
+    if (wl.justRefused) toast(`${wl.justRefused} tried to join but is not on the list. Allow them on the Players tab.`);
+  });
   document.querySelectorAll('#ctx-menu button').forEach((b) => (b.onclick = () => runMenu(b.dataset.cmd)));
   document.addEventListener('click', (e) => {
     if (!$('ctx-menu').contains(e.target)) closeMenu();

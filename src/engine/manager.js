@@ -45,6 +45,7 @@ class ServerManager extends EventEmitter {
     this.rcons = new Map();
     this.pregen = new Map();
     this.nameCache = new Map();
+    this.refused = new Map(); // server id -> names turned away by the whitelist this session
     this.mapRenderer = new worldMap.MapRenderer();
     this.playit = new Playit(dataRoot);
     this.playit.on('status', (state) => this.emit('playit', state));
@@ -424,6 +425,7 @@ class ServerManager extends EventEmitter {
     if (existing && existing.child) throw new Error('Server is already running');
 
     await this.prepareNetwork(id);
+    await this.setupWhitelist(id);
     const { javaPath } = await ensureJava(config.javaMajor, this.paths.java, {
       log: (message) => this.emit('console', id, { text: message, stream: 'system' }),
     });
@@ -436,6 +438,12 @@ class ServerManager extends EventEmitter {
     proc.on('line', (text, stream) => {
       this.emit('console', id, { text, stream });
       this.trackPregen(id, text);
+      const refused = text.match(/Disconnecting (\w{3,16}) .*not white-listed/);
+      if (refused) {
+        if (!this.refused.has(id)) this.refused.set(id, new Set());
+        this.refused.get(id).add(refused[1]);
+        this.emit('whitelist', id, { ...this.whitelistStatus(id), justRefused: refused[1] });
+      }
     });
     proc.on('status', (status) => this.emit('status', id, status));
     proc.on('players', (players) => this.emit('players', id, players));
@@ -604,6 +612,141 @@ class ServerManager extends EventEmitter {
     const client = this.rcons.get(id);
     if (client) client.close();
     this.rcons.delete(id);
+  }
+
+  // ---------- app settings ----------
+
+  readSettings() {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(this.paths.root, 'settings.json'), 'utf8'));
+    } catch {
+      return {};
+    }
+  }
+
+  async updateSettings(patch) {
+    const next = { ...this.readSettings(), ...patch };
+    await fsp.writeFile(path.join(this.paths.root, 'settings.json'), JSON.stringify(next, null, 2));
+    return next;
+  }
+
+  /** The host's Minecraft name: saved in settings, or guessed from the official launcher. */
+  hostName() {
+    const saved = this.readSettings().hostName;
+    if (saved) return { name: saved, saved: true };
+    const dir = path.join(process.env.APPDATA || os.homedir(), '.minecraft');
+    for (const f of ['launcher_accounts_microsoft_store.json', 'launcher_accounts.json']) {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        const accounts = j.accounts || {};
+        const active = accounts[j.activeAccountLocalId] || Object.values(accounts)[0];
+        const name = active && active.minecraftProfile && active.minecraftProfile.name;
+        if (name) return { name, saved: false };
+      } catch {
+        // launcher not installed or file unreadable
+      }
+    }
+    return { name: null, saved: false };
+  }
+
+  async setHostName(name) {
+    if (!/^[A-Za-z0-9_]{3,16}$/.test(name || '')) throw new Error('That is not a valid Minecraft username');
+    await this.updateSettings({ hostName: name });
+  }
+
+  // ---------- whitelist ----------
+
+  whitelistFile(id) {
+    return path.join(this.serverDir(id), 'whitelist.json');
+  }
+
+  readWhitelist(id) {
+    try {
+      return JSON.parse(fs.readFileSync(this.whitelistFile(id), 'utf8'));
+    } catch {
+      return [];
+    }
+  }
+
+  whitelistStatus(id) {
+    const props = this.readProperties(id);
+    return {
+      enabled: props['white-list'] === 'true',
+      players: this.readWhitelist(id),
+      refused: [...(this.refused.get(id) || [])],
+    };
+  }
+
+  /** Look a player up with Mojang, so they can be added while the server is stopped. */
+  async lookupProfile(name) {
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(name || '')) throw new Error('That is not a valid Minecraft username');
+    let profile;
+    try {
+      profile = await getJson(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(name)}`);
+    } catch {
+      throw new Error(`No Minecraft account is called "${name}"`);
+    }
+    const hex = profile.id;
+    const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    return { uuid, name: profile.name };
+  }
+
+  async whitelistAdd(id, name) {
+    if (this.isRunning(id)) {
+      const out = await this.rcon(id, `whitelist add ${name}`);
+      if (/does not exist|Unknown/i.test(out)) throw new Error(`No Minecraft account is called "${name}"`);
+    } else {
+      const profile = await this.lookupProfile(name);
+      const list = this.readWhitelist(id).filter((p) => p.uuid !== profile.uuid);
+      list.push(profile);
+      await fsp.writeFile(this.whitelistFile(id), JSON.stringify(list, null, 2));
+    }
+    const refused = this.refused.get(id);
+    if (refused) refused.delete(name);
+    this.emit('whitelist', id, this.whitelistStatus(id));
+  }
+
+  async whitelistRemove(id, name) {
+    if (this.isRunning(id)) await this.rcon(id, `whitelist remove ${name}`);
+    else {
+      const list = this.readWhitelist(id).filter((p) => p.name.toLowerCase() !== String(name).toLowerCase());
+      await fsp.writeFile(this.whitelistFile(id), JSON.stringify(list, null, 2));
+    }
+    this.emit('whitelist', id, this.whitelistStatus(id));
+  }
+
+  async setWhitelistEnabled(id, enabled) {
+    // enforce-whitelist kicks anyone not on the list when it is turned on.
+    await this.writeProperties(id, { 'white-list': String(enabled), 'enforce-whitelist': String(enabled) });
+    // Sent through the console: on 26.3, 'whitelist on' over RCON drops the RCON connection.
+    if (this.isRunning(id)) this.sendCommand(id, `whitelist ${enabled ? 'on' : 'off'}`);
+    this.emit('whitelist', id, this.whitelistStatus(id));
+  }
+
+  /**
+   * First start of a server: every server has a public address, so turn the
+   * whitelist on and put the host on it. Runs once per server.
+   */
+  async setupWhitelist(id) {
+    const config = this.readConfig(id);
+    if (config.whitelistSetUp) return;
+    const host = this.readSettings().hostName;
+    const props = this.readProperties(id);
+    // Servers that already have a server.properties keep the owner's choice,
+    // except that the host is added if the list is on (Minecraft 26.3+ turns it on by default).
+    const isNew = !props['white-list'];
+    if (isNew) await this.writeProperties(id, { 'white-list': 'true', 'enforce-whitelist': 'true' });
+    const enabled = isNew || props['white-list'] === 'true';
+    if (enabled && host && !this.readWhitelist(id).some((p) => p.name.toLowerCase() === host.toLowerCase())) {
+      try {
+        const profile = await this.lookupProfile(host);
+        await fsp.writeFile(this.whitelistFile(id), JSON.stringify([...this.readWhitelist(id), profile], null, 2));
+        this.emit('console', id, { text: `Added ${profile.name} (you) to this server's whitelist.`, stream: 'system' });
+      } catch (err) {
+        this.emit('console', id, { text: `Could not add ${host} to the whitelist: ${err.message}`, stream: 'system' });
+      }
+    }
+    await this.updateConfig(id, { whitelistSetUp: true });
   }
 
   // ---------- players ----------

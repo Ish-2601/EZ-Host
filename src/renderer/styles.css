@@ -233,6 +233,14 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .slot .count { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
 .slot .ghost { color: #555c68; font-size: 10px; }
 
+.wl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.wl-list li { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 5px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border); }
+.wl-list img { width: 24px; height: 24px; border-radius: 4px; image-rendering: pixelated; }
+.wl-list button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 0 4px; }
+.wl-list button:hover { color: var(--danger); }
+.wl-refused { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); border: 1px solid rgba(210,153,34,.45); }
+#wl-form input { max-width: 260px; }
+
 /* ---------- World ---------- */
 .map-head { display: flex; gap: 8px; align-items: center; }
 .map-head select { width: auto; }
