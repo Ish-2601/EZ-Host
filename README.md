@@ -20,10 +20,25 @@ Early development. Working today:
 - Check any CurseForge/Prism profile against a server (wrong loader version, missing mods)
 - Export a server's client pack as a CurseForge-importable .zip, or as a .mrpack
 - Client-only mods are left off the server, unless another mod requires them; Java is picked to satisfy both Minecraft and the mods
+- Online address through playit.gg, so friends on other internet connections can join (link once in your browser)
+- Windows installer with desktop and Start menu shortcuts
 
-Planned next: playit.gg tunnel so friends can join without port forwarding, CurseForge modpack search, backups, and an installer build.
+See [ROADMAP.md](ROADMAP.md) for what comes next.
 
-## Run it
+## Install
+
+Build the Windows installer, then double-click it:
+
+```bash
+npm install
+npm run dist
+```
+
+This creates `dist/Self-Host-MC-Setup-0.1.0.exe`. It installs Self-Host MC for your Windows user, with a desktop shortcut and a Start menu entry. The installer is not code-signed yet, so Windows SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**.
+
+Server files, Java runtimes, and downloads are stored in `%APPDATA%\self-host-mc\data` and are kept when you uninstall.
+
+## Develop
 
 Requires Node.js 20+ on Windows.
 
@@ -31,8 +46,6 @@ Requires Node.js 20+ on Windows.
 npm install
 npm start
 ```
-
-Server files, Java runtimes, and downloads are stored in `%APPDATA%\self-host-mc\data`.
 
 ## Engine smoke test
 

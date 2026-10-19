@@ -38,6 +38,14 @@ contextBridge.exposeInMainWorld('api', {
   exportMrpack: invoke('servers:exportMrpack'),
   onExport: subscribe('server:export'),
 
+  playitStatus: invoke('playit:status'),
+  playitLink: invoke('playit:link'),
+  playitUnlink: invoke('playit:unlink'),
+  playitRetry: invoke('playit:retry'),
+  getPlayers: invoke('servers:players'),
+  onPlayit: subscribe('playit:status'),
+  onPlayers: subscribe('server:players'),
+
   onConsole: subscribe('server:console'),
   onStatus: subscribe('server:status'),
   onInstall: subscribe('server:install'),

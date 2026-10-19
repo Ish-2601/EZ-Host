@@ -1,16 +1,22 @@
-// UI logic. Talks to the main process only through window.api (see preload.js).
-// `api` is the global exposed by preload.js.
+// UI logic. Talks to the main process only through the `api` global from preload.js.
 const $ = (id) => document.getElementById(id);
 
 const state = {
   servers: [],
   selectedId: null,
-  pack: null, // { project, versions } while picking a version
+  source: 'profiles', // which "where do mods come from" tab is open
+  pending: null, // what the details step will create: { kind: 'modrinth'|'profile', ... }
+  profiles: null,
   totalMemoryMb: 8192,
-  installProgress: {}, // serverId -> { label, done, total }
+  install: {}, // serverId -> { step, label, done, total }
+  players: {}, // serverId -> [names]
+  playit: { state: 'unlinked', linked: false },
+  join: {}, // serverId -> joinInfo
 };
 
 const MAX_CONSOLE_LINES = 2000;
+const LOADER_NAMES = { fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge', quilt: 'Quilt', vanilla: 'Vanilla' };
+const INSTALL_STEPS = ['Download mods', 'Install Java', 'Install mod loader', 'Ready'];
 
 // ---------- helpers ----------
 
@@ -19,19 +25,21 @@ function el(tag, attrs = {}, ...children) {
   for (const [k, v] of Object.entries(attrs)) {
     if (k === 'class') node.className = v;
     else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
-    else if (v !== undefined && v !== null) node.setAttribute(k, v);
+    else if (v !== undefined && v !== null && v !== false) node.setAttribute(k, v);
   }
   for (const child of children.flat()) {
-    if (child === null || child === undefined) continue;
+    if (child === null || child === undefined || child === false) continue;
     node.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
   return node;
 }
 
-function icon(url, cls) {
+function icon(url, cls = '') {
   if (url) return el('img', { src: url, class: cls, alt: '' });
-  return el('div', { class: `icon-fallback ${cls || ''}` }, '⛏');
+  return el('div', { class: `icon-fallback ${cls}` }, '⛏');
 }
+
+const loaderName = (loader, version) => `${LOADER_NAMES[loader] || loader} ${version || ''}`.trim();
 
 function formatMb(mb) {
   return mb >= 1024 ? `${(mb / 1024).toFixed(mb % 1024 ? 1 : 0)} GB` : `${mb} MB`;
@@ -43,15 +51,13 @@ function formatCount(n) {
   return String(n);
 }
 
-const LOADER_NAMES = { fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge', quilt: 'Quilt', vanilla: 'Vanilla' };
-
 let toastTimer = null;
 function toast(message, isError = false) {
   const t = $('toast');
   t.textContent = message;
   t.className = `toast${isError ? ' error' : ''}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add('hidden'), isError ? 7000 : 3500);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), isError ? 7000 : 3000);
 }
 
 async function attempt(fn) {
@@ -59,57 +65,143 @@ async function attempt(fn) {
     return await fn();
   } catch (err) {
     // IPC errors arrive as "Error invoking remote method 'x': Error: message".
-    toast(String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), true);
+    toast(String(err.message || err).replace(/^Error invoking remote method '[^']+': (\w*Error: )?/, ''), true);
     return undefined;
   }
 }
 
-function showView(name) {
-  for (const v of ['empty', 'new', 'pack', 'profile', 'server']) $(`view-${v}`).classList.toggle('hidden', v !== name);
+function copyButton(text) {
+  return el('button', { class: 'btn', type: 'button', onclick: async () => {
+    await attempt(() => api.copy(text));
+    toast(`Copied ${text}`);
+  } }, 'Copy');
 }
 
-function setupRamSlider(input, label, value) {
+function showView(name) {
+  for (const v of ['empty', 'new', 'details', 'server']) $(`view-${v}`).classList.toggle('hidden', v !== name);
+  $('main').scrollTop = 0;
+}
+
+function current() {
+  return state.servers.find((s) => s.id === state.selectedId);
+}
+
+/** RAM slider capped at 75% of this PC's memory, with a plain-language hint. */
+function setupRamSlider(input, label, value, hint) {
   const max = Math.max(4096, Math.floor((state.totalMemoryMb * 0.75) / 512) * 512);
   input.max = String(max);
   input.value = String(Math.min(value, max));
-  label.textContent = formatMb(Number(input.value));
-  input.oninput = () => (label.textContent = formatMb(Number(input.value)));
+  const update = () => {
+    const mb = Number(input.value);
+    label.textContent = formatMb(mb);
+    if (hint) {
+      hint.textContent =
+        mb < 4096 ? 'Fine for small packs. Big modpacks may run out of memory.'
+        : mb > state.totalMemoryMb * 0.6 ? `This PC has ${formatMb(state.totalMemoryMb)}. Leave some for Windows and Minecraft itself.`
+        : `Good for most modpacks. This PC has ${formatMb(state.totalMemoryMb)} in total.`;
+    }
+  };
+  input.oninput = update;
+  update();
+}
+
+function recommendedRam(modCount = 100) {
+  const want = modCount > 250 ? 8192 : modCount > 120 ? 6144 : 4096;
+  return Math.min(want, Math.floor((state.totalMemoryMb * 0.5) / 512) * 512 || 4096);
 }
 
 // ---------- sidebar ----------
 
+function statusWord(s) {
+  if (s.status === 'installing') return 'Installing…';
+  if (s.status === 'running') {
+    const n = (state.players[s.id] || []).length;
+    return n ? `Running · ${n} online` : 'Running';
+  }
+  if (s.status === 'starting') return 'Starting…';
+  if (s.status === 'stopping') return 'Stopping…';
+  if (s.installError) return 'Install failed';
+  if (s.crashed) return 'Stopped unexpectedly';
+  return 'Stopped';
+}
+
 function renderServerList() {
-  const list = $('server-list');
-  list.replaceChildren(
+  $('server-list').replaceChildren(
     ...state.servers.map((s) =>
-      el(
-        'li',
-        { class: `server-item${s.id === state.selectedId ? ' active' : ''}`, onclick: () => openServer(s.id) },
+      el('li', { class: `server-item${s.id === state.selectedId ? ' active' : ''}`, onclick: () => openServer(s.id) },
         icon(s.source && s.source.iconUrl),
         el('div', { class: 'grow' },
           el('div', { class: 'name' }, s.name),
-          el('div', { class: 'sub' }, s.minecraft ? `${LOADER_NAMES[s.loader] || s.loader} ${s.minecraft}` : 'Setting up…')
+          el('div', { class: 'sub' }, statusWord(s))
         ),
-        el('span', { class: `dot ${s.status}`, title: s.status })
+        el('span', { class: `dot ${s.installError || s.crashed ? 'error' : s.status}` })
       )
     )
   );
 }
 
+function renderPlayitPill() {
+  const p = state.playit;
+  const text = !p.linked ? 'Online address: not set up'
+    : p.state === 'online' ? 'Online address: on'
+    : p.state === 'starting' ? 'Online address: connecting…'
+    : p.state === 'error' ? 'Online address: problem'
+    : 'Online address: ready';
+  $('playit-pill').replaceChildren(el('span', { class: `dot ${p.linked ? p.state : ''}` }), text);
+}
+
 async function refreshServers() {
   state.servers = (await attempt(() => api.listServers())) || [];
   renderServerList();
-  if (state.selectedId) {
-    const current = state.servers.find((s) => s.id === state.selectedId);
-    if (current) renderServer(current);
-    else {
-      state.selectedId = null;
-      showView(state.servers.length ? 'new' : 'empty');
-    }
+  const s = current();
+  if (s) renderServer(s);
+  else if (state.selectedId) {
+    state.selectedId = null;
+    showView(state.servers.length ? 'new' : 'empty');
   }
 }
 
-// ---------- new server: search ----------
+// ---------- new server: step 1 ----------
+
+function openNewServer() {
+  state.selectedId = null;
+  renderServerList();
+  showView('new');
+  selectSource(state.source);
+}
+
+async function selectSource(source) {
+  state.source = source;
+  document.querySelectorAll('.source-tab').forEach((t) => t.classList.toggle('active', t.dataset.source === source));
+  for (const s of ['profiles', 'modrinth', 'file']) $(`source-${s}`).classList.toggle('hidden', s !== source);
+  if (source === 'profiles') await loadProfiles();
+  if (source === 'modrinth') {
+    if (!$('search-results').children.length) search('');
+    $('search-input').focus();
+  }
+}
+
+async function loadProfiles(force = false) {
+  if (!state.profiles || force) state.profiles = (await attempt(() => api.listProfiles())) || [];
+  const usable = state.profiles.filter((p) => p.minecraft && p.modCount > 0);
+  $('profiles-empty').classList.toggle('hidden', usable.length > 0);
+  $('profile-results').replaceChildren(
+    ...usable.map((p) =>
+      el('button', { class: 'pack-card', type: 'button', onclick: () => chooseProfile(p) },
+        el('div', { class: 'icon-fallback' }, '⛏'),
+        el('div', {},
+          el('div', { class: 'launcher' }, p.launcherName),
+          el('div', { class: 'title' }, p.name),
+          el('div', { class: 'tags' },
+            el('span', { class: 'tag' }, `Minecraft ${p.minecraft}`),
+            el('span', { class: 'tag' }, loaderName(p.loader, p.loaderVersion)),
+            el('span', { class: 'tag' }, `${p.modCount} ${p.modCount === 1 ? 'mod' : 'mods'}`)
+          )
+        )
+      )
+    )
+  );
+}
 
 let searchSeq = 0;
 async function search(query) {
@@ -118,13 +210,11 @@ async function search(query) {
   const result = await attempt(() => api.searchModpacks(query, { limit: 30 }));
   if (seq !== searchSeq || !result) return;
   $('search-status').textContent = result.hits.length
-    ? query ? `${result.total} modpacks found` : 'Popular server-ready modpacks'
-    : 'No modpacks found.';
+    ? query ? `${result.total} modpacks found` : 'Popular modpacks that run on servers'
+    : 'No modpacks found. Try another name.';
   $('search-results').replaceChildren(
     ...result.hits.map((hit) =>
-      el(
-        'button',
-        { class: 'pack-card', type: 'button', onclick: () => openPack(hit) },
+      el('button', { class: 'pack-card', type: 'button', onclick: () => chooseModrinthPack(hit) },
         icon(hit.iconUrl),
         el('div', {},
           el('div', { class: 'title' }, hit.title),
@@ -132,7 +222,7 @@ async function search(query) {
           el('div', { class: 'tags' },
             hit.loaders.map((l) => el('span', { class: 'tag' }, LOADER_NAMES[l] || l)),
             hit.gameVersions.length ? el('span', { class: 'tag' }, hit.gameVersions[hit.gameVersions.length - 1]) : null,
-            el('span', { class: 'tag' }, `⬇ ${formatCount(hit.downloads)}`)
+            el('span', { class: 'tag' }, `${formatCount(hit.downloads)} downloads`)
           )
         )
       )
@@ -140,90 +230,48 @@ async function search(query) {
   );
 }
 
-function openNewServer() {
-  state.selectedId = null;
-  renderServerList();
-  showView('new');
-  $('search-input').focus();
-  if (!$('search-results').children.length) search('');
-  loadProfiles();
+// ---------- new server: step 2 ----------
+
+function openDetails({ title, description, iconUrl, name, ram }) {
+  showView('details');
+  const img = $('detail-icon');
+  if (iconUrl) img.src = iconUrl;
+  else img.src = 'icon.svg';
+  $('detail-title').textContent = title;
+  $('detail-desc').textContent = description || '';
+  $('server-name').value = name;
+  setupRamSlider($('server-ram'), $('ram-label'), ram, $('ram-hint'));
 }
 
-// ---------- new server: from a game profile ----------
-
-async function loadProfiles() {
-  const profiles = (await attempt(() => api.listProfiles())) || [];
-  state.profiles = profiles;
-  const usable = profiles.filter((p) => p.minecraft && p.modCount > 0);
-  $('profiles-section').classList.toggle('hidden', usable.length === 0);
-  $('profile-results').replaceChildren(
-    ...usable.map((p) =>
-      el(
-        'button',
-        { class: 'pack-card profile-card', type: 'button', onclick: () => openProfile(p) },
-        el('div', { class: 'icon-fallback' }, '⛏'),
-        el('div', {},
-          el('div', { class: 'launcher' }, p.launcherName),
-          el('div', { class: 'title' }, p.name),
-          el('div', { class: 'tags' },
-            el('span', { class: 'tag' }, p.minecraft),
-            el('span', { class: 'tag' }, `${LOADER_NAMES[p.loader] || p.loader} ${p.loaderVersion || ''}`.trim()),
-            el('span', { class: 'tag' }, `${p.modCount} mods`)
-          )
-        )
-      )
-    )
-  );
+function chooseProfile(p) {
+  state.pending = { kind: 'profile', profile: p };
+  $('version-field').classList.add('hidden');
+  openDetails({
+    title: p.name,
+    description: `${p.launcherName} profile · Minecraft ${p.minecraft} · ${loaderName(p.loader, p.loaderVersion)} · ${p.modCount} mods. The server will use the same mods, so this profile can join it.`,
+    name: p.name,
+    ram: recommendedRam(p.modCount),
+  });
 }
 
-function openProfile(profile) {
-  state.profile = profile;
-  showView('profile');
-  $('profile-title').textContent = profile.name;
-  $('profile-desc').textContent = `${profile.launcherName} profile · Minecraft ${profile.minecraft} · ${LOADER_NAMES[profile.loader] || profile.loader} ${profile.loaderVersion || ''} · ${profile.modCount} mods`;
-  $('profile-server-name').value = profile.name;
-  setupRamSlider($('profile-ram'), $('profile-ram-label'), 6144);
-}
-
-async function createFromProfile(event) {
-  event.preventDefault();
-  if (!state.profile) return;
-  const created = await attempt(() =>
-    api.createFromProfile({
-      name: $('profile-server-name').value.trim(),
-      profileId: state.profile.id,
-      memoryMb: Number($('profile-ram').value),
-    })
-  );
-  if (created) {
-    await refreshServers();
-    openServer(created.id);
-  }
-}
-
-// ---------- new server: choose version ----------
-
-async function openPack(hit) {
-  showView('pack');
-  $('pack-icon').src = hit.iconUrl || '';
-  $('pack-title').textContent = hit.title;
-  $('pack-desc').textContent = hit.description;
-  $('server-name').value = hit.title;
-  setupRamSlider($('server-ram'), $('ram-label'), 6144);
+async function chooseModrinthPack(hit) {
+  state.pending = { kind: 'modrinth', hit, versions: [] };
+  $('version-field').classList.remove('hidden');
+  openDetails({ title: hit.title, description: hit.description, iconUrl: hit.iconUrl, name: hit.title, ram: recommendedRam(150) });
   const select = $('pack-version');
   select.replaceChildren(el('option', {}, 'Loading versions…'));
   select.disabled = true;
-
+  $('version-meta').textContent = '';
   const versions = await attempt(() => api.getModpackVersions(hit.id));
-  if (!versions) return;
-  state.pack = { project: hit, versions };
+  if (!versions || state.pending.hit !== hit) return;
+  state.pending.versions = versions;
   if (!versions.length) {
-    select.replaceChildren(el('option', {}, 'No downloadable versions'));
+    select.replaceChildren(el('option', {}, 'No versions can be installed on a server'));
     return;
   }
   select.replaceChildren(
     ...versions.map((v) =>
-      el('option', { value: v.id }, `${v.versionNumber} · MC ${v.gameVersions.join(', ')} · ${v.loaders.map((l) => LOADER_NAMES[l] || l).join(', ')}`)
+      el('option', { value: v.id }, `${v.versionNumber} · Minecraft ${v.gameVersions.join(', ')} · ${v.loaders.map((l) => LOADER_NAMES[l] || l).join(', ')}`)
     )
   );
   select.disabled = false;
@@ -232,21 +280,19 @@ async function openPack(hit) {
 }
 
 function updateVersionMeta() {
-  const v = state.pack.versions.find((x) => x.id === $('pack-version').value);
-  if (!v) return;
-  $('version-meta').textContent = `${v.name} · released ${new Date(v.datePublished).toLocaleDateString()} · ${formatMb(Math.round(v.file.size / 1048576))} download`;
+  const v = state.pending.versions.find((x) => x.id === $('pack-version').value);
+  if (v) $('version-meta').textContent = `Released ${new Date(v.datePublished).toLocaleDateString()} · ${formatMb(Math.max(1, Math.round(v.file.size / 1048576)))} download`;
 }
 
 async function createServer(event) {
   event.preventDefault();
-  if (!state.pack) return;
+  const p = state.pending;
+  if (!p) return;
+  const common = { name: $('server-name').value.trim(), memoryMb: Number($('server-ram').value) };
   const created = await attempt(() =>
-    api.createFromModrinth({
-      name: $('server-name').value.trim(),
-      projectId: state.pack.project.id,
-      versionId: $('pack-version').value,
-      memoryMb: Number($('server-ram').value),
-    })
+    p.kind === 'profile'
+      ? api.createFromProfile({ ...common, profileId: p.profile.id })
+      : api.createFromModrinth({ ...common, projectId: p.hit.id, versionId: $('pack-version').value })
   );
   if (created) {
     await refreshServers();
@@ -255,78 +301,252 @@ async function createServer(event) {
 }
 
 async function importFile() {
-  const created = await attempt(() => api.createFromFile({ memoryMb: 6144 }));
+  const created = await attempt(() => api.createFromFile({ memoryMb: recommendedRam(150) }));
   if (created) {
     await refreshServers();
     openServer(created.id);
   }
 }
 
-// ---------- server view ----------
+// ---------- server page ----------
 
 async function openServer(id) {
   state.selectedId = id;
   renderServerList();
   showView('server');
-  const server = state.servers.find((s) => s.id === id) || (await attempt(() => api.getServer(id)));
-  if (!server) return;
-  renderServer(server);
-  switchTab(server.installed && server.status === 'stopped' ? 'join' : 'console');
+  const s = current() || (await attempt(() => api.getServer(id)));
+  if (!s) return;
+  state.players[id] = (await attempt(() => api.getPlayers(id))) || [];
+  renderServer(s);
+  switchTab(s.status === 'installing' || s.installError || s.crashed ? 'console' : 'friends');
   const history = (await attempt(() => api.getConsole(id))) || [];
-  const consoleEl = $('console');
-  consoleEl.replaceChildren();
-  history.forEach((line) => appendConsole(line));
-  consoleEl.scrollTop = consoleEl.scrollHeight;
+  $('console').replaceChildren();
+  history.forEach(appendConsole);
+  $('console').scrollTop = $('console').scrollHeight;
+  loadShare(id);
 }
 
 function renderServer(s) {
   $('srv-name').textContent = s.name;
-  const srvIcon = $('srv-icon');
-  if (s.source && s.source.iconUrl) srvIcon.src = s.source.iconUrl;
-  else srvIcon.removeAttribute('src');
-
+  $('srv-icon').src = (s.source && s.source.iconUrl) || 'icon.svg';
   const parts = [];
   if (s.packName) parts.push(`${s.packName} ${s.packVersion || ''}`.trim());
-  else if (s.source && s.source.title) parts.push(s.source.title);
   if (s.minecraft) parts.push(`Minecraft ${s.minecraft}`);
-  if (s.loader) parts.push(`${LOADER_NAMES[s.loader] || s.loader} ${s.loaderVersion || ''}`.trim());
-  parts.push(`${formatMb(s.memoryMb)} RAM`);
+  if (s.loader) parts.push(loaderName(s.loader, s.loaderVersion));
+  parts.push(`${formatMb(s.memoryMb)} memory`);
   $('srv-meta').textContent = parts.join(' · ');
-
-  const status = s.status;
-  const pill = $('srv-status');
-  pill.textContent = status;
-  pill.className = `status-pill ${status}`;
-
-  const busy = status === 'installing';
-  const live = status === 'running' || status === 'starting';
-  $('srv-start').disabled = busy || !s.installed || !s.eulaAccepted || status !== 'stopped';
-  $('srv-stop').disabled = !live;
-  $('command-input').disabled = !live;
-
-  $('srv-install').classList.toggle('hidden', !busy);
-  if (busy) renderProgress(s.id);
-
-  const err = $('srv-error');
-  err.classList.toggle('hidden', !s.installError || busy);
-  err.textContent = s.installError ? `Install failed: ${s.installError}` : '';
-
-  $('srv-eula').classList.toggle('hidden', !s.installed || s.eulaAccepted || busy);
+  renderStatus(s);
+  $('share-card').classList.toggle('hidden', !s.installed);
+  renderOnlineBox();
 }
 
-function renderProgress(id) {
-  const p = state.installProgress[id];
-  const bar = $('srv-progress-bar');
-  if (p && p.total) {
+function renderStatus(s) {
+  const card = $('status-card');
+  const players = state.players[s.id] || [];
+  let dot = s.status;
+  let text = statusWord(s);
+  let help = '';
+  let problem = false;
+
+  if (s.status === 'installing') {
+    help = 'Setting everything up. Big modpacks can take a few minutes.';
+  } else if (s.installError) {
+    problem = true;
+    dot = 'error';
+    help = s.installError;
+  } else if (s.status === 'starting') {
+    help = 'Loading mods and the world. Modded servers can take a minute or two.';
+  } else if (s.status === 'running') {
+    help = players.length ? 'Players online:' : 'Your server is up. Share the address below with your friends.';
+  } else if (s.status === 'stopping') {
+    help = 'Saving the world…';
+  } else if (s.crashed) {
+    problem = true;
+    dot = 'error';
+    help = 'The server stopped by itself. The Console tab shows what went wrong.';
+  } else if (!s.eulaAccepted) {
+    help = 'Ready for its first start. You will be asked to accept the Minecraft EULA.';
+  } else {
+    help = 'Press Start when you are ready to play.';
+  }
+
+  card.classList.toggle('running', s.status === 'running');
+  card.classList.toggle('problem', problem);
+  $('status-dot').className = `dot big ${dot}`;
+  $('status-text').textContent = text;
+  $('status-help').textContent = help;
+
+  const live = ['starting', 'running', 'stopping'].includes(s.status);
+  $('srv-start').classList.toggle('hidden', live);
+  $('srv-stop').classList.toggle('hidden', !live);
+  $('srv-start').disabled = s.status === 'installing' || !s.installed;
+  $('srv-stop').disabled = s.status === 'stopping';
+  $('command-input').disabled = !live;
+
+  $('install-progress').classList.toggle('hidden', s.status !== 'installing');
+  if (s.status === 'installing') renderInstall(s.id);
+
+  const box = $('players');
+  box.classList.toggle('hidden', s.status !== 'running' || !players.length);
+  box.replaceChildren(...players.map((p) => el('span', { class: 'player' }, p)));
+}
+
+/** Map install messages to the four friendly steps. */
+function noteInstallMessage(id, message) {
+  const info = state.install[id] || (state.install[id] = { step: 0 });
+  if (/Java/.test(message)) info.step = Math.max(info.step, 1);
+  if (/(Fabric|Quilt|Forge|NeoForge) .*(installer|launcher)|Installing (Forge|NeoForge|Quilt)|Minecraft .* server\.\.\./.test(message)) info.step = Math.max(info.step, 2);
+  if (/Install complete/.test(message)) info.step = 3;
+}
+
+function renderInstall(id) {
+  const info = state.install[id] || { step: 0 };
+  $('install-steps').replaceChildren(
+    ...INSTALL_STEPS.map((label, i) => el('li', { class: i < info.step ? 'done' : i === info.step ? 'active' : '' }, label))
+  );
+  const bar = $('progress-bar');
+  if (info.total) {
     bar.classList.remove('indeterminate');
-    bar.style.width = `${Math.round((p.done / p.total) * 100)}%`;
-    const amount = p.label === 'Mods' ? `${p.done}/${p.total} files` : `${formatMb(Math.round(p.done / 1048576))} of ${formatMb(Math.round(p.total / 1048576))}`;
-    $('srv-progress-label').textContent = `Installing · ${p.label}: ${amount}`;
+    bar.style.width = `${Math.round((info.done / info.total) * 100)}%`;
+    $('progress-label').textContent = info.label === 'Mods'
+      ? `${info.done} of ${info.total} files`
+      : `${formatMb(Math.round(info.done / 1048576))} of ${formatMb(Math.round(info.total / 1048576))}`;
   } else {
     bar.classList.add('indeterminate');
     bar.style.width = '';
-    $('srv-progress-label').textContent = 'Installing…';
+    $('progress-label').textContent = '';
   }
+}
+
+// ---------- share with friends ----------
+
+async function loadShare(id) {
+  const info = await attempt(() => api.joinInfo(id));
+  if (!info || id !== state.selectedId) return;
+  state.join[id] = info;
+  const rows = [['On this PC', info.local], ...info.lan.map((l) => ['Same Wi-Fi / home network', l.address])];
+  $('lan-addresses').replaceChildren(
+    ...rows.map(([who, address]) => el('div', { class: 'address' }, el('span', { class: 'who' }, who), el('code', {}, address), copyButton(address)))
+  );
+  renderOnlineBox();
+}
+
+function renderOnlineBox() {
+  const s = current();
+  if (!s) return;
+  const p = state.playit;
+  const running = ['starting', 'running'].includes(s.status);
+  let content;
+
+  if (p.state === 'linking') {
+    content = el('div', { class: 'notice' },
+      el('strong', {}, 'Finish in your browser'),
+      el('p', {}, 'Sign in or make a free playit.gg account, then approve Self-Host MC. This page updates by itself.'),
+      p.claimUrl ? el('a', { href: p.claimUrl, target: '_blank', rel: 'noreferrer' }, 'Open the approval page again') : null
+    );
+  } else if (!p.linked) {
+    content = el('div', { class: 'notice' },
+      el('strong', {}, 'Let friends join from anywhere'),
+      el('p', {}, 'Self-Host MC uses playit.gg, a free service, to give your server an online address. No router settings needed. You link it once, in your browser.'),
+      p.message ? el('p', { class: 'small' }, p.message) : null,
+      el('button', { class: 'btn btn-primary', onclick: () => attempt(() => api.playitLink()) }, 'Connect playit.gg')
+    );
+  } else if (p.state === 'online' && p.address && running) {
+    content = el('div', { class: 'online-box' },
+      el('div', { class: 'address-big' }, el('code', {}, p.address), copyButton(p.address)),
+      el('p', { class: 'muted small' }, p.message || 'Friends paste this into Minecraft: Multiplayer, Add Server.'),
+      p.resolveLink ? el('a', { href: p.resolveLink, target: '_blank', rel: 'noreferrer' }, 'Fix this on playit.gg') : null
+    );
+  } else if (p.state === 'starting' && running) {
+    content = el('p', { class: 'muted' }, 'Getting your online address…');
+  } else if (p.state === 'error') {
+    content = el('div', { class: 'notice error' },
+      el('strong', {}, 'The online address is not working'),
+      el('p', {}, p.message || 'Something went wrong with playit.gg.'),
+      running ? el('button', { class: 'btn', onclick: () => attempt(() => api.playitRetry(s.id)) }, 'Try again') : null
+    );
+  } else {
+    content = el('p', { class: 'muted' }, p.address
+      ? `Your online address is ${p.address}. It works while the server is running.`
+      : 'Start the server to get your online address.');
+  }
+  $('online-box').replaceChildren(content);
+
+  $('playit-settings-text').textContent = p.linked
+    ? 'This PC is linked to playit.gg. Disconnecting removes the link from this PC only.'
+    : 'Not connected.';
+  $('playit-unlink').disabled = !p.linked;
+}
+
+// ---------- tabs ----------
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  for (const tab of ['friends', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
+  if (name === 'settings') loadSettings();
+  if (name === 'friends') loadFriends();
+  if (name === 'console') $('console').scrollTop = $('console').scrollHeight;
+}
+
+async function loadFriends() {
+  const id = state.selectedId;
+  const s = current();
+  if (!s) return;
+  $('check-result').classList.add('hidden');
+  $('export-status').textContent = '';
+  const needsList = $('join-needs');
+  if (!s.installed) {
+    needsList.replaceChildren(el('li', {}, 'Available once the server has finished installing.'));
+  } else {
+    const needs = await attempt(() => api.clientNeeds(id));
+    if (needs && id === state.selectedId) {
+      needsList.replaceChildren(
+        el('li', {}, 'Minecraft ', el('strong', {}, needs.minecraft)),
+        el('li', {}, el('strong', {}, loaderName(needs.loader, needs.loaderVersion)), ' (the mod loader, exact version)'),
+        el('li', {}, el('strong', {}, `${needs.modCount} mods`), ` from ${s.packName ? `${s.packName} ${s.packVersion || ''}`.trim() : s.name}`)
+      );
+    }
+  }
+  $('export-mrpack').classList.toggle('hidden', !s.source || s.source.type === 'profile');
+  $('export-cf').disabled = !s.installed;
+  $('export-mrpack').disabled = !s.installed;
+
+  const mp = s.source && s.source.modpack;
+  $('join-modpack-hint').classList.toggle('hidden', !mp);
+  if (mp) $('join-modpack-hint').textContent = `Friends who use CurseForge can also install "${mp.name}"${mp.version ? ` (${mp.version})` : ''} straight from CurseForge.`;
+
+  if (!state.profiles) state.profiles = (await attempt(() => api.listProfiles())) || [];
+  const select = $('check-profile');
+  select.replaceChildren(
+    ...state.profiles.map((p) => el('option', { value: p.id }, `${p.name} (${p.launcherName}, Minecraft ${p.minecraft || '?'}, ${p.modCount} mods)`))
+  );
+  if (!state.profiles.length) select.replaceChildren(el('option', {}, 'No CurseForge or Prism profiles found'));
+  $('check-btn').disabled = !state.profiles.length || !s.installed;
+}
+
+async function checkProfile() {
+  $('check-btn').disabled = true;
+  const result = await attempt(() => api.checkProfile(state.selectedId, $('check-profile').value));
+  $('check-btn').disabled = false;
+  if (!result) return;
+  const line = (ok, text) => el('div', { class: ok ? 'ok' : 'bad' }, `${ok ? '✓' : '✗'} ${text}`);
+  const items = [
+    line(result.minecraft.ok, `Minecraft: server needs ${result.minecraft.need}, profile has ${result.minecraft.have}`),
+    line(result.loader.versionOk, `Mod loader: server needs ${result.loader.need}, profile has ${result.loader.have}`),
+    line(result.missing.length === 0, result.missing.length ? `${result.missing.length} mod(s) missing from the profile` : 'All the server\'s mods are in the profile'),
+  ];
+  if (result.missing.length) items.push(el('details', {}, el('summary', {}, 'Show missing mods'), el('ul', {}, result.missing.map((m) => el('li', {}, m)))));
+  if (result.extra.length) items.push(el('details', {}, el('summary', {}, `${result.extra.length} extra mod(s) in the profile (usually fine)`), el('ul', {}, result.extra.map((m) => el('li', {}, m)))));
+  items.push(el('strong', {}, result.ready ? 'This profile can join the server.' : 'This profile can\'t join yet. Save the pack for CurseForge and import it as a new profile.'));
+  $('check-result').replaceChildren(...items);
+  $('check-result').classList.remove('hidden');
+}
+
+async function exportPack(kind) {
+  const id = state.selectedId;
+  $('export-status').textContent = kind === 'cf' ? 'Building the pack…' : '';
+  const file = await attempt(() => (kind === 'cf' ? api.exportClientPack(id) : api.exportMrpack(id)));
+  $('export-status').textContent = file ? `Saved to ${file}` : '';
 }
 
 function classifyLine(line) {
@@ -337,126 +557,28 @@ function classifyLine(line) {
 }
 
 function appendConsole(line) {
-  const consoleEl = $('console');
-  const atBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
-  consoleEl.append(el('div', { class: classifyLine(line) }, line.text));
-  while (consoleEl.childElementCount > MAX_CONSOLE_LINES) consoleEl.firstChild.remove();
-  if (atBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
-}
-
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  for (const tab of ['join', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
-  if (name === 'settings') loadSettings();
-  if (name === 'join') loadJoin();
-}
-
-// ---------- how to join ----------
-
-async function loadJoin() {
-  const id = state.selectedId;
-  const s = state.servers.find((x) => x.id === id);
-  if (!s) return;
-  $('check-result').classList.add('hidden');
-  $('export-status').textContent = '';
-
-  const info = await attempt(() => api.joinInfo(id));
-  if (info && id === state.selectedId) {
-    const rows = [['Playing on this PC', info.local], ...info.lan.map((l) => ['Friends on your Wi-Fi / home network', l.address])];
-    $('join-addresses').replaceChildren(
-      ...rows.map(([who, address]) =>
-        el('div', { class: 'address' },
-          el('span', { class: 'who' }, who),
-          el('code', {}, address),
-          el('button', { class: 'btn', type: 'button', onclick: async () => {
-            await attempt(() => api.copy(address));
-            toast(`Copied ${address}`);
-          } }, 'Copy')
-        )
-      )
-    );
-  }
-
-  const needsList = $('join-needs');
-  if (!s.installed) {
-    needsList.replaceChildren(el('li', {}, 'Finish installing the server first.'));
-  } else {
-    const needs = await attempt(() => api.clientNeeds(id));
-    if (needs && id === state.selectedId) {
-      needsList.replaceChildren(
-        el('li', {}, 'Minecraft ', el('strong', {}, needs.minecraft)),
-        el('li', {}, 'Mod loader ', el('strong', {}, `${LOADER_NAMES[needs.loader] || needs.loader} ${needs.loaderVersion || ''}`.trim()), ' (the exact version matters)'),
-        el('li', {}, el('strong', {}, `${needs.modCount} mods`), ' from ', s.packName ? `${s.packName} ${s.packVersion || ''}`.trim() : s.name)
-      );
-    }
-  }
-  $('export-mrpack').classList.toggle('hidden', !s.source || s.source.type === 'profile');
-  $('export-cf').disabled = !s.installed;
-  $('export-mrpack').disabled = !s.installed;
-
-  const hint = $('join-modpack-hint');
-  const mp = s.source && s.source.modpack;
-  hint.classList.toggle('hidden', !mp);
-  if (mp) hint.textContent = `Friends who use CurseForge can also install "${mp.name}"${mp.version ? ` (${mp.version})` : ''} directly from CurseForge.`;
-
-  const profiles = state.profiles || (await attempt(() => api.listProfiles())) || [];
-  state.profiles = profiles;
-  const select = $('check-profile');
-  select.replaceChildren(
-    ...profiles.map((p) => el('option', { value: p.id }, `${p.name} (${p.launcherName}, ${p.minecraft || '?'}, ${p.modCount} mods)`))
-  );
-  $('check-btn').disabled = !profiles.length || !s.installed;
-  if (!profiles.length) select.replaceChildren(el('option', {}, 'No CurseForge or Prism profiles found on this PC'));
-}
-
-async function checkProfile() {
-  $('check-btn').disabled = true;
-  const result = await attempt(() => api.checkProfile(state.selectedId, $('check-profile').value));
-  $('check-btn').disabled = false;
-  if (!result) return;
-  const box = $('check-result');
-  const line = (ok, text) => el('div', { class: ok ? 'ok' : 'bad' }, `${ok ? '✓' : '✗'} ${text}`);
-  const items = [
-    line(result.minecraft.ok, `Minecraft: needs ${result.minecraft.need}, profile has ${result.minecraft.have}`),
-    line(result.loader.versionOk, `Mod loader: needs ${result.loader.need}, profile has ${result.loader.have}`),
-    line(result.missing.length === 0, result.missing.length ? `${result.missing.length} mod(s) missing from the profile` : 'All server mods are in the profile'),
-  ];
-  if (result.missing.length) {
-    items.push(el('details', {}, el('summary', {}, 'Show missing mods'), el('ul', {}, result.missing.map((m) => el('li', {}, m)))));
-  }
-  if (result.extra.length) {
-    items.push(el('details', {}, el('summary', {}, `${result.extra.length} extra mod(s) in the profile (usually fine if they are client-only)`), el('ul', {}, result.extra.map((m) => el('li', {}, m)))));
-  }
-  items.push(
-    el('div', {}, result.ready
-      ? 'This profile is ready to join the server.'
-      : 'This profile will not be able to join. Export the pack for CurseForge above and import it as a new profile.')
-  );
-  box.replaceChildren(...items);
-  box.classList.remove('hidden');
-}
-
-async function exportPack(kind) {
-  const id = state.selectedId;
-  $('export-status').textContent = kind === 'cf' ? 'Building the pack…' : '';
-  const file = await attempt(() => (kind === 'cf' ? api.exportClientPack(id) : api.exportMrpack(id)));
-  $('export-status').textContent = file ? `Saved to ${file}` : '';
+  const c = $('console');
+  const atBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 40;
+  c.append(el('div', { class: classifyLine(line) }, line.text));
+  while (c.childElementCount > MAX_CONSOLE_LINES) c.firstChild.remove();
+  if (atBottom) c.scrollTop = c.scrollHeight;
 }
 
 async function loadSettings() {
-  const s = state.servers.find((x) => x.id === state.selectedId);
+  const s = current();
   if (!s) return;
   $('set-name').value = s.name;
   setupRamSlider($('set-ram'), $('set-ram-label'), s.memoryMb);
   const props = (await attempt(() => api.getProperties(s.id))) || {};
-  const hasProps = Object.keys(props).length > 0;
+  const has = Object.keys(props).length > 0;
   $('set-motd').value = props.motd || '';
   $('set-maxplayers').value = props['max-players'] || '';
   $('set-port').value = props['server-port'] || '';
   $('set-difficulty').value = props.difficulty || 'easy';
-  for (const id of ['set-motd', 'set-maxplayers', 'set-port', 'set-difficulty']) $(id).disabled = !hasProps;
-  $('settings-hint').classList.toggle('hidden', hasProps);
+  for (const id of ['set-motd', 'set-maxplayers', 'set-port', 'set-difficulty']) $(id).disabled = !has;
+  $('settings-hint').classList.toggle('hidden', has);
   $('settings-saved').textContent = '';
+  renderOnlineBox();
 }
 
 async function saveSettings(event) {
@@ -476,8 +598,24 @@ async function saveSettings(event) {
   });
   if (ok) {
     $('settings-saved').textContent = 'Saved';
-    refreshServers();
+    await refreshServers();
+    loadShare(id);
   }
+}
+
+// ---------- start / EULA ----------
+
+async function startServer() {
+  const s = current();
+  if (!s) return;
+  if (!s.eulaAccepted) {
+    $('eula-check').checked = false;
+    $('eula-accept').disabled = true;
+    $('eula-modal').classList.remove('hidden');
+    $('eula-check').focus();
+    return;
+  }
+  await attempt(() => api.start(s.id));
 }
 
 // ---------- wiring ----------
@@ -485,54 +623,59 @@ async function saveSettings(event) {
 function wire() {
   $('new-server-btn').onclick = openNewServer;
   document.querySelector('[data-action="new-server"]').onclick = openNewServer;
+  document.querySelectorAll('.source-tab').forEach((t) => (t.onclick = () => selectSource(t.dataset.source)));
   $('import-file-btn').onclick = importFile;
   $('search-form').onsubmit = (e) => {
     e.preventDefault();
     search($('search-input').value.trim());
   };
-  $('back-to-search').onclick = () => showView('new');
+  $('back-to-source').onclick = () => showView('new');
   $('create-form').onsubmit = createServer;
-  $('back-from-profile').onclick = () => showView('new');
-  $('profile-form').onsubmit = createFromProfile;
+
+  $('srv-start').onclick = startServer;
+  $('srv-stop').onclick = () => attempt(() => api.stop(state.selectedId));
+  $('eula-check').onchange = (e) => ($('eula-accept').disabled = !e.target.checked);
+  $('eula-cancel').onclick = () => $('eula-modal').classList.add('hidden');
+  $('eula-accept').onclick = async () => {
+    $('eula-modal').classList.add('hidden');
+    const id = state.selectedId;
+    if (await attempt(() => api.acceptEula(id))) await attempt(() => api.start(id));
+    refreshServers();
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') $('eula-modal').classList.add('hidden');
+  });
+
+  document.querySelectorAll('.tab').forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
+  $('command-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const command = $('command-input').value.trim().replace(/^\//, '');
+    if (!command) return;
+    $('command-input').value = '';
+    await attempt(() => api.command(state.selectedId, command));
+  };
+  $('copy-log').onclick = async () => {
+    await attempt(() => api.copy($('console').innerText));
+    toast('Console log copied');
+  };
   $('check-btn').onclick = checkProfile;
   $('export-cf').onclick = () => exportPack('cf');
   $('export-mrpack').onclick = () => exportPack('mrpack');
-  api.onExport((id, p) => {
-    if (id === state.selectedId) $('export-status').textContent = `Building the pack… ${p.done}/${p.total} files`;
-  });
-
-  $('srv-start').onclick = () => attempt(() => api.start(state.selectedId));
-  $('srv-stop').onclick = () => attempt(() => api.stop(state.selectedId));
-  $('eula-check').onchange = (e) => ($('eula-accept').disabled = !e.target.checked);
-  $('eula-accept').onclick = async () => {
-    await attempt(() => api.acceptEula(state.selectedId));
-    $('eula-check').checked = false;
-    $('eula-accept').disabled = true;
-    refreshServers();
-  };
-  $('command-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const input = $('command-input');
-    const command = input.value.trim().replace(/^\//, '');
-    if (!command) return;
-    input.value = '';
-    await attempt(() => api.command(state.selectedId, command));
-  };
-  document.querySelectorAll('.tab').forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
   $('settings-form').onsubmit = saveSettings;
   $('open-folder').onclick = () => attempt(() => api.openFolder(state.selectedId));
+  $('playit-unlink').onclick = async () => {
+    if (confirm('Disconnect playit.gg from this PC? Friends will not be able to join from other networks until you connect it again.')) {
+      await attempt(() => api.playitUnlink());
+    }
+  };
   $('delete-server').onclick = async () => {
-    const s = state.servers.find((x) => x.id === state.selectedId);
-    if (!s || !confirm(`Delete "${s.name}"? Its world and all files will be removed from this PC.`)) return;
-    const ok = await attempt(async () => {
-      await api.deleteServer(s.id);
-      return true;
-    });
-    if (ok) {
+    const s = current();
+    if (!s || !confirm(`Delete "${s.name}"? Its world and all its files will be removed from this PC.`)) return;
+    if (await attempt(async () => (await api.deleteServer(s.id), true))) {
       state.selectedId = null;
       await refreshServers();
-      showView(state.servers.length ? 'new' : 'empty');
-      if (state.servers.length) openNewServer();
+      if (state.servers.length) openServer(state.servers[0].id);
+      else showView('empty');
     }
   };
 
@@ -540,17 +683,35 @@ function wire() {
     if (id === state.selectedId) appendConsole(line);
   });
   api.onInstall((id, event) => {
-    if (event.progress) {
-      state.installProgress[id] = event.progress;
-      if (id === state.selectedId) renderProgress(id);
+    const info = state.install[id] || (state.install[id] = { step: 0 });
+    if (event.progress) Object.assign(info, event.progress);
+    if (event.message) {
+      noteInstallMessage(id, event.message);
+      info.total = 0; // a new step started; its byte/file count arrives with the next progress event
+      if (id === state.selectedId) appendConsole({ text: event.message, stream: 'system' });
     }
-    if (event.message && id === state.selectedId) appendConsole({ text: event.message, stream: 'system' });
+    if (id === state.selectedId) renderInstall(id);
   });
-  api.onStatus((id, status) => {
+  api.onStatus(async (id, status) => {
     const s = state.servers.find((x) => x.id === id);
     if (s) s.status = status;
+    if (status === 'stopped') await refreshServers();
     renderServerList();
     if (s && id === state.selectedId) renderServer(s);
+  });
+  api.onPlayers((id, players) => {
+    state.players[id] = players;
+    renderServerList();
+    const s = current();
+    if (s && s.id === id) renderStatus(s);
+  });
+  api.onPlayit((p) => {
+    state.playit = { ...p, linked: !['unlinked', 'linking'].includes(p.state) };
+    renderPlayitPill();
+    renderOnlineBox();
+  });
+  api.onExport((id, p) => {
+    if (id === state.selectedId) $('export-status').textContent = `Building the pack… ${p.done} of ${p.total} files`;
   });
   api.onServersChanged(() => refreshServers());
 }
@@ -558,6 +719,8 @@ function wire() {
 async function init() {
   wire();
   state.totalMemoryMb = (await attempt(() => api.totalMemoryMb())) || 8192;
+  state.playit = (await attempt(() => api.playitStatus())) || state.playit;
+  renderPlayitPill();
   await refreshServers();
   if (state.servers.length) openServer(state.servers[0].id);
   else showView('empty');

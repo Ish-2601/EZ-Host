@@ -22,6 +22,7 @@ class ServerProcess extends EventEmitter {
     this.status = 'stopped';
     this.history = [];
     this.stopTimer = null;
+    this.players = new Set();
   }
 
   buildArgs() {
@@ -52,6 +53,7 @@ class ServerProcess extends EventEmitter {
     if (this.child) throw new Error('Server is already running');
     const args = this.buildArgs();
     this.pushLine(`> java ${args.join(' ')}`, 'system');
+    this.crashed = false;
     this.setStatus('starting');
 
     const child = spawn(this.javaPath, args, { cwd: this.serverDir, windowsHide: true });
@@ -67,6 +69,7 @@ class ServerProcess extends EventEmitter {
           this.pushLine(line, stream);
           // Vanilla, Fabric, Forge and NeoForge all print this once the world is loaded.
           if (this.status === 'starting' && /Done \([\d.,]+s\)!/.test(line)) this.setStatus('running');
+          this.trackPlayers(line);
         }
       };
     };
@@ -79,10 +82,25 @@ class ServerProcess extends EventEmitter {
     child.on('exit', (code) => {
       clearTimeout(this.stopTimer);
       this.child = null;
+      if (this.players.size) {
+        this.players.clear();
+        this.emit('players', []);
+      }
+      // A stop the user asked for exits with 0; anything else is a crash.
+      this.crashed = this.status !== 'stopping' && code !== 0;
       this.pushLine(`Server process exited with code ${code}`, 'system');
       this.setStatus('stopped');
       this.emit('exit', code);
     });
+  }
+
+  trackPlayers(line) {
+    const joined = line.match(/\]: (\w{3,16}) joined the game/);
+    const left = line.match(/\]: (\w{3,16}) left the game/);
+    if (joined) this.players.add(joined[1]);
+    else if (left) this.players.delete(left[1]);
+    else return;
+    this.emit('players', [...this.players]);
   }
 
   /** Send a console command, e.g. "say hi" or "op Steve". */

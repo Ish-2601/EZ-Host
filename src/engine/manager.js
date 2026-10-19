@@ -19,6 +19,7 @@ const { ServerProcess } = require('./server-process');
 const launchers = require('./launchers');
 const clientPack = require('./client-pack');
 const { pruneClientOnlyMods } = require('./mod-metadata');
+const { Playit } = require('./playit');
 
 const CONFIG_FILE = 'selfhost.json';
 
@@ -36,6 +37,9 @@ class ServerManager extends EventEmitter {
     this.processes = new Map();
     this.installing = new Set();
     this.installLogs = new Map();
+    this.playit = new Playit(dataRoot);
+    this.playit.on('status', (state) => this.emit('playit', state));
+    this.playit.on('log', (line) => this.emit('playit-log', line));
     fs.mkdirSync(this.paths.servers, { recursive: true });
   }
 
@@ -74,7 +78,8 @@ class ServerManager extends EventEmitter {
     const proc = this.processes.get(id);
     let status = proc ? proc.status : 'stopped';
     if (this.installing.has(id)) status = 'installing';
-    return { ...config, status, dir: this.serverDir(id) };
+    const crashed = Boolean(proc && proc.crashed && status === 'stopped');
+    return { ...config, status, crashed, dir: this.serverDir(id) };
   }
 
   /** Install messages followed by the running server's console lines. */
@@ -402,9 +407,45 @@ class ServerManager extends EventEmitter {
     });
     proc.on('line', (text, stream) => this.emit('console', id, { text, stream }));
     proc.on('status', (status) => this.emit('status', id, status));
+    proc.on('players', (players) => this.emit('players', id, players));
+    proc.on('exit', () => {
+      // Close the tunnel once no server is left running.
+      const anyRunning = [...this.processes.values()].some((p) => p.child);
+      if (!anyRunning) this.playit.stop().catch(() => {});
+    });
     this.processes.set(id, proc);
     proc.start();
+    if (this.playit.isLinked()) this.startTunnel(id).catch(() => {});
     return this.describe(id);
+  }
+
+  /** Open (or re-point) the playit.gg tunnel for a server. Errors also arrive as 'playit' events. */
+  async startTunnel(id) {
+    const port = Number(this.readProperties(id)['server-port']) || 25565;
+    const address = await this.playit.start(port, (line) => this.emit('console', id, { text: line, stream: 'system' }));
+    this.emit('console', id, { text: `Online address for friends: ${address}`, stream: 'system' });
+    return address;
+  }
+
+  /** Link playit.gg; `openUrl` opens the approval page in the user's browser. */
+  async linkPlayit(openUrl) {
+    await this.playit.link(openUrl);
+    // If a server is already running, give it an online address right away.
+    const running = [...this.processes.entries()].find(([, p]) => p.child);
+    if (running) this.startTunnel(running[0]).catch(() => {});
+  }
+
+  async unlinkPlayit() {
+    await this.playit.unlink();
+  }
+
+  playitStatus() {
+    return { ...this.playit.state, linked: this.playit.isLinked() };
+  }
+
+  players(id) {
+    const proc = this.processes.get(id);
+    return proc ? [...proc.players] : [];
   }
 
   async stop(id) {
@@ -430,6 +471,7 @@ class ServerManager extends EventEmitter {
   /** Stop every running server; used when the app quits. */
   async stopAll() {
     await Promise.all([...this.processes.values()].map((p) => p.stop()));
+    await this.playit.stop();
   }
 
   readProperties(id) {

@@ -4,6 +4,23 @@ const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('elect
 const { ServerManager } = require('../engine/manager');
 const modrinth = require('../engine/modrinth');
 
+// Keep data in %APPDATA%\self-host-mc whether running from source or installed
+// (the installed app would otherwise use its product name, "Self-Host MC").
+app.setPath('userData', path.join(app.getPath('appData'), 'self-host-mc'));
+
+// One window only: opening the app again focuses the running one, so two
+// copies never fight over the same servers.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 let mainWindow = null;
 let manager = null;
 let quitting = false;
@@ -16,6 +33,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#14161a',
     title: 'Self-Host MC',
+    icon: path.join(__dirname, '..', '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -83,6 +101,15 @@ function registerIpc() {
   handle('system:totalMemoryMb', () => Math.floor(require('os').totalmem() / 1024 / 1024));
   handle('system:copy', (text) => clipboard.writeText(String(text)));
 
+  handle('playit:status', () => manager.playitStatus());
+  handle('playit:link', () => {
+    // Runs in the background; progress arrives as 'playit' events.
+    manager.linkPlayit((url) => shell.openExternal(url)).catch(() => {});
+  });
+  handle('playit:unlink', () => manager.unlinkPlayit());
+  handle('playit:retry', (id) => manager.startTunnel(id));
+  handle('servers:players', (id) => manager.players(id));
+
   handle('profiles:list', () => manager.listProfiles());
   handle('servers:createFromProfile', (opts) => manager.createFromProfile(opts));
   handle('servers:checkProfile', (id, profileId) => manager.checkProfile(id, profileId));
@@ -122,6 +149,8 @@ function registerIpc() {
   manager.on('status', (id, status) => send('server:status', id, status));
   manager.on('install', (id, event) => send('server:install', id, event));
   manager.on('changed', () => send('servers:changed'));
+  manager.on('playit', (state) => send('playit:status', state));
+  manager.on('players', (id, players) => send('server:players', id, players));
 }
 
 app.whenReady().then(() => {

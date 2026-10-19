@@ -6,6 +6,8 @@
   "private": true,
   "scripts": {
     "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "make-icon": "electron scripts/make-icon.js",
     "test:engine": "node scripts/engine-smoke.js"
   },
   "author": "Ish-2601",
@@ -14,6 +16,37 @@
     "adm-zip": "^0.6.1"
   },
   "devDependencies": {
-    "electron": "^44.9.0"
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "productName": "Self-Host MC",
+  "build": {
+    "appId": "com.ish2601.selfhostmc",
+    "productName": "Self-Host MC",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Self-Host MC",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Self-Host-MC-Setup-${version}.${ext}"
+    }
   }
 }
