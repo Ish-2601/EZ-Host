@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' https://cdn.modrinth.com data:; style-src 'self'; script-src 'self'" />
+        content="default-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net data:; style-src 'self'; script-src 'self'" />
   <title>Self-Host MC</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -164,6 +164,7 @@
 
       <nav class="tabs">
         <button class="tab" data-tab="friends">Friends' setup</button>
+        <button class="tab" data-tab="players">Players</button>
         <button class="tab" data-tab="world">World</button>
         <button class="tab" data-tab="console">Console</button>
         <button class="tab" data-tab="settings">Settings</button>
@@ -210,6 +211,16 @@
             <button id="check-btn" class="btn">Check</button>
           </div>
           <div id="check-result" class="check-result hidden"></div>
+        </div>
+      </div>
+
+      <div id="tab-players" class="tab-panel hidden">
+        <div class="players-layout">
+          <div class="card player-list-card">
+            <h3>Players</h3>
+            <ul id="player-list" class="player-list"></ul>
+          </div>
+          <div id="player-detail" class="card player-detail"></div>
         </div>
       </div>
 

@@ -14,6 +14,9 @@ const state = {
   join: {}, // serverId -> joinInfo
   tunnels: {}, // serverId -> { state, address, message, resolveLink }
   pregen: {}, // serverId -> pregeneration status
+  playerList: [],
+  playerUuid: null, // selected player on the Players tab
+  playerTimer: null,
   menuFor: null, // server id the right-click menu is open for
 };
 
@@ -535,6 +538,177 @@ async function newAddress(s) {
   renderOnlineBox();
 }
 
+// ---------- players ----------
+
+const headUrl = (uuid, size = 64) => `https://mc-heads.net/avatar/${uuid}/${size}`;
+
+async function loadPlayers() {
+  const id = state.selectedId;
+  const list = (await attempt(() => api.listPlayers(id))) || [];
+  if (id !== state.selectedId) return;
+  state.playerList = list;
+  if (!list.some((p) => p.uuid === state.playerUuid)) state.playerUuid = list.length ? list[0].uuid : null;
+  fill($('player-list'), list.length ? null : el('li', { class: 'muted' }, 'Nobody has joined yet.'),
+    ...list.map((p) =>
+      el('li', { class: p.uuid === state.playerUuid ? 'active' : '', onclick: () => showPlayer(p.uuid) },
+        el('img', { src: headUrl(p.uuid, 32), alt: '' }),
+        el('span', { class: 'pname' }, p.name || p.uuid.slice(0, 8)),
+        p.op ? el('span', { class: 'tag' }, 'OP') : null,
+        el('span', { class: `dot ${p.online ? 'online' : ''}`, title: p.online ? 'Online' : 'Offline' })
+      )
+    )
+  );
+  if (state.playerUuid) showPlayer(state.playerUuid);
+  else fill($('player-detail'), el('p', { class: 'muted' }, 'Players show up here after they join the server once.'));
+}
+
+function iconRow(kind, value, max) {
+  const count = Math.ceil(max / 2);
+  const row = el('div', { class: 'icons' });
+  for (let i = 0; i < count; i++) {
+    const fillLevel = value >= i * 2 + 2 ? 1 : value >= i * 2 + 1 ? 0.5 : 0;
+    row.append(icon2(kind, fillLevel, `${kind}${i}`));
+  }
+  row.append(el('span', { class: 'label' }, `${Math.round(value * 10) / 10} / ${max}`));
+  return row;
+}
+
+/** A heart or drumstick drawn as SVG, full, half or empty. */
+function icon2(kind, level, uid) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 20 20');
+  const color = kind === 'heart' ? '#e5534b' : '#c98b4a';
+  const gid = `g-${uid}-${Math.random().toString(36).slice(2, 7)}`;
+  const defs = document.createElementNS(NS, 'defs');
+  const grad = document.createElementNS(NS, 'linearGradient');
+  grad.setAttribute('id', gid);
+  for (const [offset, c] of [[0, color], [level, color], [level, '#3a3f49'], [1, '#3a3f49']]) {
+    const stop = document.createElementNS(NS, 'stop');
+    stop.setAttribute('offset', String(offset));
+    stop.setAttribute('stop-color', c);
+    grad.append(stop);
+  }
+  defs.append(grad);
+  svg.append(defs);
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', kind === 'heart'
+    ? 'M10 17.5 2.6 10.2A4.6 4.6 0 0 1 10 4.6a4.6 4.6 0 0 1 7.4 5.6Z'
+    : 'M12.6 2.4a5 5 0 0 1 5 5c0 3.2-3.4 5.6-6.2 5.6l-3.2 3.2a1.8 1.8 0 1 1-2.5-.3 1.8 1.8 0 1 1-.3-2.5L8.6 10.2c0-2.8 1-7.8 4-7.8Z');
+  path.setAttribute('fill', `url(#${gid})`);
+  path.setAttribute('stroke', '#111');
+  path.setAttribute('stroke-width', '1');
+  svg.append(path);
+  return svg;
+}
+
+function itemLabel(item) {
+  if (item.name) return item.name;
+  const [ns, id] = item.id.includes(':') ? item.id.split(':') : ['minecraft', item.id];
+  const words = id.split(/[_/]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  return ns === 'minecraft' ? words : `${words}`;
+}
+
+function slotEl(item, key, player, extraClass = '') {
+  if (!item) return el('div', { class: `slot ${extraClass}` });
+  const label = itemLabel(item);
+  return el('div', {
+    class: `slot filled ${item.enchanted ? 'enchanted' : ''} ${extraClass}`,
+    title: `${label} × ${item.count}\n${item.id}${item.enchanted ? '\nEnchanted' : ''}\nClick to remove`,
+    onclick: () => removeItem(player, key, item),
+  }, el('span', {}, label.length > 22 ? `${label.slice(0, 20)}…` : label), item.count > 1 ? el('span', { class: 'count' }, item.count) : null);
+}
+
+async function removeItem(player, key, item) {
+  if (!confirm(`Remove ${itemLabel(item)} × ${item.count} from ${player.name || 'this player'}?`)) return;
+  await playerDo(player, 'remove', { slot: key });
+}
+
+async function playerDo(player, action, args) {
+  const out = await attempt(() => api.playerAction(state.selectedId, player.uuid, action, args));
+  if (out !== undefined) {
+    toast(out && out.trim() ? out.trim().split('\n')[0].slice(0, 120) : 'Done');
+    await showPlayer(player.uuid, { quiet: true });
+    if (action === 'op' || action === 'deop') loadPlayers();
+  }
+}
+
+async function showPlayer(uuid, { quiet = false } = {}) {
+  state.playerUuid = uuid;
+  document.querySelectorAll('#player-list li').forEach((li, i) => li.classList.toggle('active', state.playerList[i] && state.playerList[i].uuid === uuid));
+  const id = state.selectedId;
+  const box = $('player-detail');
+  if (!quiet) fill(box, el('p', { class: 'muted' }, 'Loading…'));
+  const d = quiet ? await api.playerDetails(id, uuid).catch(() => null) : await attempt(() => api.playerDetails(id, uuid));
+  if (!d || id !== state.selectedId || uuid !== state.playerUuid) {
+    if (!d && !quiet) fill(box, el('p', { class: 'muted' }, 'No saved data for this player yet.'));
+    return;
+  }
+  const s = current();
+  const online = d.online && s && s.status === 'running';
+
+  const actions = el('div', { class: 'player-actions' });
+  const button = (label, action, args, opts = {}) => {
+    const b = el('button', { class: `btn ${opts.cls || ''}`, type: 'button' }, label);
+    b.onclick = async () => {
+      if (opts.confirm && !confirm(opts.confirm)) return;
+      b.disabled = true;
+      await playerDo(d, action, typeof args === 'function' ? args() : args);
+      b.disabled = false;
+    };
+    if (opts.disabled) b.disabled = true;
+    return b;
+  };
+  const mode = el('select', {}, ['survival', 'creative', 'adventure', 'spectator'].map((m) => el('option', { value: m }, m[0].toUpperCase() + m.slice(1))));
+  mode.value = d.gameMode;
+  const xp = el('input', { type: 'number', min: 0, max: 10000, value: d.xpLevel, class: 'count' });
+  fill(actions,
+    button('Heal', 'heal'),
+    button('Feed', 'feed'),
+    mode, button('Set game mode', 'gamemode', () => ({ mode: mode.value })),
+    el('span', { class: 'muted small' }, 'XP level'), xp, button('Set', 'xp', () => ({ level: Number(xp.value) })),
+    d.op ? button('Remove OP', 'deop') : button('Make OP', 'op'),
+    online ? button('Kick', 'kick', {}, { cls: 'btn-danger', confirm: `Kick ${d.name}?` }) : null,
+    button('Clear inventory', 'clear', {}, { cls: 'btn-danger', confirm: `Delete everything in ${d.name || 'this player'}'s inventory? This can't be undone.` })
+  );
+  const give = el('div', { class: 'player-actions' });
+  const itemInput = el('input', { type: 'text', class: 'item', placeholder: 'Item id, e.g. minecraft:diamond' });
+  const countInput = el('input', { type: 'number', class: 'count', min: 1, max: 6400, value: 1 });
+  fill(give, itemInput, countInput, button('Give', 'give', () => ({ item: itemInput.value, count: Number(countInput.value) }), { disabled: !online }),
+    online ? null : el('span', { class: 'muted small' }, 'Giving items needs the player online.'));
+
+  const slots = d.slots || {};
+  const armor = el('div', { class: 'inv-row' }, ['head', 'chest', 'legs', 'feet'].map((k) => slotEl(slots[`armor:${k}`], `armor:${k}`, d)), slotEl(slots.offhand, 'offhand', d));
+  const main = el('div', { class: 'inv-grid' });
+  for (let i = 9; i < 36; i++) main.append(slotEl(slots[`inv:${i}`], `inv:${i}`, d));
+  const hotbar = el('div', { class: 'inv-grid' });
+  for (let i = 0; i < 9; i++) hotbar.append(slotEl(slots[`inv:${i}`], `inv:${i}`, d, i === d.selectedSlot ? 'selected' : ''));
+  const ender = el('div', { class: 'inv-grid' });
+  for (let i = 0; i < 27; i++) ender.append(slotEl(d.ender[i], `ender:${i}`, d));
+
+  const where = d.pos ? `${d.dimension.replace('minecraft:', '').replace('_', ' ')} at ${d.pos.map(Math.round).join(', ')}` : '';
+  fill(box,
+    el('div', { class: 'player-head' },
+      el('img', { src: headUrl(d.uuid, 72), alt: '' }),
+      el('div', {},
+        el('h2', {}, d.name || d.uuid),
+        el('div', { class: 'meta' }, online ? 'Online now · live data' : `Offline · from the save file${d.lastPlayed ? `, last saved ${new Date(d.lastPlayed).toLocaleString()}` : ''}`),
+        el('div', { class: 'meta' }, `${d.gameMode[0].toUpperCase() + d.gameMode.slice(1)} · XP level ${d.xpLevel}${where ? ` · ${where}` : ''}`)
+      )
+    ),
+    el('div', { class: 'bars' }, iconRow('heart', d.health, d.maxHealth), iconRow('food', d.food, 20)),
+    actions,
+    give,
+    el('div', { class: 'inv-section' },
+      el('h4', {}, 'Armor and offhand'), armor,
+      el('h4', {}, 'Inventory'), main,
+      el('h4', {}, 'Hotbar'), hotbar,
+      el('h4', {}, 'Ender chest'), ender,
+      el('p', { class: 'muted small' }, 'Click an item to remove it.')
+    )
+  );
+}
+
 // ---------- world: pregeneration ----------
 
 const RADII = [
@@ -685,8 +859,17 @@ async function deleteServer(s) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  for (const tab of ['friends', 'world', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
+  for (const tab of ['friends', 'players', 'world', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
   if (name === 'world') loadWorld();
+  clearInterval(state.playerTimer);
+  if (name === 'players') {
+    loadPlayers();
+    // Keep online players' hearts and inventory fresh while the tab is open.
+    state.playerTimer = setInterval(() => {
+      const p = state.playerList.find((x) => x.uuid === state.playerUuid);
+      if (p && p.online && !document.hidden) showPlayer(p.uuid, { quiet: true });
+    }, 5000);
+  }
   if (name === 'settings') loadSettings();
   if (name === 'friends') loadFriends();
   if (name === 'console') $('console').scrollTop = $('console').scrollHeight;
@@ -927,6 +1110,7 @@ function wire() {
   });
   api.onPlayers((id, players) => {
     state.players[id] = players;
+    if (id === state.selectedId && !$('tab-players').classList.contains('hidden')) loadPlayers();
     renderServerList();
     const s = current();
     if (s && s.id === id) renderStatus(s);

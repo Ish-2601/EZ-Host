@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const { EventEmitter } = require('events');
 
 const { dataPaths } = require('./paths');
-const { download } = require('./http');
+const { download, getJson } = require('./http');
 const modrinth = require('./modrinth');
 const { installMrpack } = require('./mrpack');
 const { requiredJavaVersion, listReleases } = require('./minecraft');
@@ -21,6 +21,8 @@ const clientPack = require('./client-pack');
 const { pruneClientOnlyMods } = require('./mod-metadata');
 const { Playit } = require('./playit');
 const { Rcon } = require('./rcon');
+const playersLib = require('./players');
+const { parseSnbt, plain: plainNbt } = require('./nbt');
 
 const CONFIG_FILE = 'selfhost.json';
 
@@ -41,6 +43,7 @@ class ServerManager extends EventEmitter {
     this.tunnels = new Map();
     this.rcons = new Map();
     this.pregen = new Map();
+    this.nameCache = new Map();
     this.playit = new Playit(dataRoot);
     this.playit.on('status', (state) => this.emit('playit', state));
     this.playit.on('log', (line) => this.emit('playit-log', line));
@@ -599,6 +602,85 @@ class ServerManager extends EventEmitter {
     const client = this.rcons.get(id);
     if (client) client.close();
     this.rcons.delete(id);
+  }
+
+  // ---------- players ----------
+
+  listPlayersOf(id) {
+    const list = playersLib.listPlayers(this.serverDir(id), this.readProperties(id), this.players(id));
+    for (const p of list) if (!p.name && this.nameCache.has(p.uuid)) p.name = this.nameCache.get(p.uuid);
+    return list;
+  }
+
+  /** Fill in names missing from usercache.json using Mojang's public profile lookup. */
+  async listPlayersWithNames(id) {
+    const list = this.listPlayersOf(id);
+    await Promise.all(
+      list
+        .filter((p) => !p.name)
+        .map(async (p) => {
+          try {
+            const profile = await getJson(`https://sessionserver.mojang.com/session/minecraft/profile/${p.uuid.replace(/-/g, '')}`);
+            if (profile && profile.name) {
+              this.nameCache.set(p.uuid, profile.name);
+              p.name = profile.name;
+            }
+          } catch {
+            // offline-mode or unknown player: keep the id
+          }
+        })
+    );
+    return list;
+  }
+
+  findPlayer(id, uuid) {
+    const player = this.listPlayersOf(id).find((p) => p.uuid === uuid);
+    if (!player) throw new Error('Player not found');
+    return player;
+  }
+
+  isRunning(id) {
+    const proc = this.processes.get(id);
+    return Boolean(proc && proc.child && proc.status === 'running');
+  }
+
+  /** Health, hunger, inventory and ender chest; live for online players, from the save file otherwise. */
+  async playerDetails(id, uuid) {
+    const player = this.findPlayer(id, uuid);
+    if (player.online && this.isRunning(id)) {
+      const out = await this.rcon(id, `data get entity ${player.name}`);
+      const start = out.indexOf('{');
+      if (start < 0) throw new Error(out || 'Could not read player data');
+      return { ...player, live: true, ...playersLib.playerView(parseSnbt(out.slice(start))) };
+    }
+    const data = plainNbt(playersLib.readDat(this.serverDir(id), this.readProperties(id), uuid));
+    return { ...player, live: false, ...playersLib.playerView(data) };
+  }
+
+  /**
+   * Change a player: heal, feed, give, remove, clear, gamemode, xp, op, deop, kick.
+   * Online players get commands; offline players have their save file edited.
+   */
+  async playerAction(id, uuid, action, args = {}) {
+    const player = this.findPlayer(id, uuid);
+    const running = this.isRunning(id);
+    if (player.online && running) {
+      const outputs = [];
+      for (const cmd of playersLib.onlineCommands(player.name, action, args)) outputs.push(await this.rcon(id, cmd));
+      return outputs.join('\n');
+    }
+    if (action === 'op' || action === 'deop') {
+      if (running) return this.rcon(id, `${action} ${player.name}`);
+      await playersLib.setOpOffline(this.serverDir(id), player, action === 'op');
+      return '';
+    }
+    if (action === 'kick') throw new Error(`${player.name} is not online`);
+    if (action === 'give') throw new Error(`${player.name} needs to be online to receive items`);
+    const props = this.readProperties(id);
+    const root = playersLib.readDat(this.serverDir(id), props, uuid);
+    playersLib.editOffline(root, action, args);
+    await playersLib.writeDat(this.serverDir(id), props, uuid, root);
+    return '';
   }
 
   // ---------- pregeneration (Chunky) ----------

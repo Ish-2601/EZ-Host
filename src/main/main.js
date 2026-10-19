@@ -112,6 +112,9 @@ function registerIpc() {
   handle('servers:players', (id) => manager.players(id));
   handle('servers:tunnel', (id) => manager.tunnelStatus(id));
   handle('servers:pregen', (id) => manager.pregenStatus(id));
+  handle('players:list', (id) => manager.listPlayersWithNames(id));
+  handle('players:details', (id, uuid) => manager.playerDetails(id, uuid));
+  handle('players:action', (id, uuid, action, args) => manager.playerAction(id, uuid, action, args));
   handle('servers:installChunky', (id) => manager.installChunky(id));
   handle('servers:pregenStart', (id, radius) => manager.startPregen(id, radius));
   handle('servers:pregenPause', (id) => manager.pausePregen(id));
