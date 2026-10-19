@@ -76,4 +76,33 @@ async function getModpackVersions(projectId) {
     .filter(Boolean);
 }
 
-module.exports = { searchModpacks, getProject, getModpackVersions };
+/**
+ * Many packs list client-only mods without marking them, and those crash a
+ * dedicated server. Look each file up by hash and return the set of sha1
+ * hashes whose Modrinth project says it does not run on servers.
+ */
+async function findClientOnlyFiles(sha1Hashes) {
+  const clientOnly = new Set();
+  if (!sha1Hashes.length) return clientOnly;
+  const { request } = require('./http');
+  const res = await request(`${API}/version_files`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hashes: sha1Hashes, algorithm: 'sha1' }),
+  });
+  const versionsByHash = await res.json();
+  const projectIds = [...new Set(Object.values(versionsByHash).map((v) => v.project_id))];
+  const serverSide = new Map();
+  // Keep URLs short: fetch projects in batches.
+  for (let i = 0; i < projectIds.length; i += 100) {
+    const ids = JSON.stringify(projectIds.slice(i, i + 100));
+    const projects = await getJson(`${API}/projects?ids=${encodeURIComponent(ids)}`);
+    for (const p of projects) serverSide.set(p.id, p.server_side);
+  }
+  for (const [hash, version] of Object.entries(versionsByHash)) {
+    if (serverSide.get(version.project_id) === 'unsupported') clientOnly.add(hash.toLowerCase());
+  }
+  return clientOnly;
+}
+
+module.exports = { searchModpacks, getProject, getModpackVersions, findClientOnlyFiles };

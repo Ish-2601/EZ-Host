@@ -6,6 +6,7 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 const { download, fileHash, mapLimit } = require('./http');
 const { safeJoin } = require('./paths');
+const { findClientOnlyFiles } = require('./modrinth');
 
 // The spec only allows pack files to come from these hosts.
 const ALLOWED_HOSTS = new Set([
@@ -91,12 +92,30 @@ async function installMrpack(mrpackPath, serverDir, { log = () => {}, onProgress
 
   await fsp.mkdir(serverDir, { recursive: true });
 
-  const files = (index.files || []).filter((f) => {
+  let files = (index.files || []).filter((f) => {
     const server = f.env && f.env.server;
     return server !== 'unsupported';
   });
   const skipped = (index.files || []).length - files.length;
-  if (skipped) log(`Skipping ${skipped} client-only file(s)`);
+  if (skipped) log(`Skipping ${skipped} client-only file(s) marked by the pack`);
+
+  try {
+    const hashes = files.map((f) => f.hashes && f.hashes.sha1).filter(Boolean);
+    const clientOnly = await findClientOnlyFiles(hashes);
+    const before = files.length;
+    files = files.filter((f) => !(f.hashes && f.hashes.sha1 && clientOnly.has(f.hashes.sha1.toLowerCase())));
+    for (const f of index.files || []) {
+      if (f.hashes && f.hashes.sha1 && clientOnly.has(f.hashes.sha1.toLowerCase())) {
+        // Remove leftovers from an earlier install of the same pack.
+        await fsp.rm(safeJoin(serverDir, f.path), { force: true });
+      }
+    }
+    if (before !== files.length) {
+      log(`Skipping ${before - files.length} more client-only mod(s) found via Modrinth`);
+    }
+  } catch (err) {
+    log(`Could not check mods against Modrinth (${err.message}); installing all of them`);
+  }
   log(`Downloading ${files.length} mod file(s)...`);
 
   let done = 0;

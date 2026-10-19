@@ -47,7 +47,11 @@ async function main() {
   let sawEula = false;
   proc.on('line', (text) => {
     console.log(`[server] ${text}`);
-    if (/eula/i.test(text)) sawEula = true;
+    if (/eula/i.test(text) && !sawEula) {
+      sawEula = true;
+      // Some packs replace the EULA check with a console prompt that waits forever.
+      setTimeout(() => proc.kill(), 3000);
+    }
   });
   proc.start();
   const code = await new Promise((resolve) => proc.on('exit', resolve));
