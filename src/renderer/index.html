@@ -226,6 +226,30 @@
 
       <div id="tab-world" class="tab-panel hidden">
         <div class="card">
+          <div class="map-head">
+            <h3>World map</h3>
+            <span class="spacer"></span>
+            <select id="map-dim"></select>
+            <button id="map-zoom-out" class="btn" title="Zoom out">−</button>
+            <button id="map-zoom-in" class="btn" title="Zoom in">+</button>
+            <button id="map-center" class="btn">Center</button>
+            <button id="map-refresh" class="btn">Refresh</button>
+          </div>
+          <div class="map-wrap">
+            <canvas id="map-canvas" class="map-canvas"></canvas>
+            <div id="map-empty" class="map-empty hidden">No map yet. Start the server once, or pregenerate, and land will appear here.</div>
+            <div id="map-hover" class="map-hover"></div>
+          </div>
+          <div class="map-bar">
+            <label class="checkbox"><input id="map-select-mode" type="checkbox" /> Select chunks (drag on the map)</label>
+            <span id="map-selection" class="muted small"></span>
+            <span class="spacer"></span>
+            <button id="map-keep" class="btn btn-primary" disabled>Keep loaded</button>
+            <button id="map-unkeep" class="btn" disabled>Stop keeping loaded</button>
+          </div>
+          <p class="muted small">Drag to move, scroll to zoom. Orange chunks stay loaded even with nobody nearby, so farms keep running. Gray land is only partly generated. Player heads show where people are right now.</p>
+        </div>
+        <div class="card">
           <h3>Pregenerate the world</h3>
           <p class="muted">Creating new land is what makes modded servers lag when people explore. Pregenerating builds the area around spawn ahead of time, ideally while nobody is playing, so exploring later is smooth.</p>
           <div id="pregen-box" class="pregen"></div>
@@ -318,5 +342,6 @@
 
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="app.js"></script>
+  <script src="map.js"></script>
 </body>
 </html>

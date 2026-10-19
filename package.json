@@ -47,6 +47,11 @@
       "shortcutName": "Self-Host MC",
       "deleteAppDataOnUninstall": false,
       "artifactName": "Self-Host-MC-Setup-${version}.${ext}"
-    }
+    },
+    "asarUnpack": [
+      "src/engine/map-worker.js",
+      "src/engine/map-render.js",
+      "src/engine/nbt.js"
+    ]
   }
 }

@@ -721,6 +721,7 @@ const RADII = [
 
 async function loadWorld() {
   const id = state.selectedId;
+  if (typeof WorldMap !== 'undefined') WorldMap.open(id);
   state.pregen[id] = (await attempt(() => api.pregenStatus(id))) || {};
   renderPregen();
 }
@@ -861,6 +862,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   for (const tab of ['friends', 'players', 'world', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
   if (name === 'world') loadWorld();
+  else if (typeof WorldMap !== 'undefined') WorldMap.close();
   clearInterval(state.playerTimer);
   if (name === 'players') {
     loadPlayers();

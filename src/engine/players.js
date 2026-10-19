@@ -23,18 +23,25 @@ function worldDir(serverDir, props) {
   return path.join(serverDir, props['level-name'] || 'world');
 }
 
-/** Everyone who has joined: from usercache.json and the playerdata folder. */
+// Newer versions keep player files in world/players/data; older ones in world/playerdata.
+function playerDataDirs(serverDir, props) {
+  const world = worldDir(serverDir, props);
+  return [path.join(world, 'players', 'data'), path.join(world, 'playerdata')];
+}
+
+/** Everyone who has joined: from usercache.json and the player data folders. */
 function listPlayers(serverDir, props, onlineNames = []) {
   const byUuid = new Map();
   for (const entry of readJson(path.join(serverDir, 'usercache.json'), [])) {
     if (entry && entry.uuid && entry.name) byUuid.set(entry.uuid, { uuid: entry.uuid, name: entry.name });
   }
-  const dataDir = path.join(worldDir(serverDir, props), 'playerdata');
-  if (fs.existsSync(dataDir)) {
+  for (const dataDir of playerDataDirs(serverDir, props)) {
+    if (!fs.existsSync(dataDir)) continue;
     for (const f of fs.readdirSync(dataDir)) {
       const m = f.match(/^([0-9a-f-]{36})\.dat$/);
       if (!m) continue;
       const p = byUuid.get(m[1]) || { uuid: m[1], name: null };
+      if (p.hasData) continue;
       p.lastPlayed = fs.statSync(path.join(dataDir, f)).mtimeMs;
       p.hasData = true;
       byUuid.set(m[1], p);
@@ -49,7 +56,8 @@ function listPlayers(serverDir, props, onlineNames = []) {
 
 function datFile(serverDir, props, uuid) {
   if (!/^[0-9a-f-]{36}$/.test(uuid)) throw new Error('Invalid player id');
-  return path.join(worldDir(serverDir, props), 'playerdata', `${uuid}.dat`);
+  const files = playerDataDirs(serverDir, props).map((d) => path.join(d, `${uuid}.dat`));
+  return files.find((f) => fs.existsSync(f)) || files[0];
 }
 
 function readDat(serverDir, props, uuid) {

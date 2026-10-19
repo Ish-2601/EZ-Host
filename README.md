@@ -22,6 +22,12 @@ Early development. Working today:
 - Client-only mods are left off the server, unless another mod requires them; Java is picked to satisfy both Minecraft and the mods
 - Online address through playit.gg, so friends on other internet connections can join (link once in your browser)
 - Windows installer with desktop and Start menu shortcuts
+- Right-click a server to open, rename, change settings, open its folder or delete it
+- Plain Minecraft (vanilla) servers
+- A separate port and online address for each server
+- Pregenerate the world with Chunky (added automatically), with live progress
+- Players: heads, hearts, hunger, inventory and ender chest; heal, feed, give, remove items, game mode, XP, OP, kick
+- World map rendered from the save, with live player heads; select chunks to keep them loaded
 
 See [ROADMAP.md](ROADMAP.md) for what comes next.
 

@@ -113,6 +113,12 @@ function registerIpc() {
   handle('servers:tunnel', (id) => manager.tunnelStatus(id));
   handle('servers:pregen', (id) => manager.pregenStatus(id));
   handle('players:list', (id) => manager.listPlayersWithNames(id));
+  handle('map:dimensions', (id) => manager.mapDimensions(id));
+  handle('map:regions', (id, dim) => manager.mapRegions(id, dim));
+  handle('map:tile', (id, dim, rx, rz) => manager.mapTile(id, dim, rx, rz));
+  handle('map:players', (id) => manager.playerPositions(id));
+  handle('map:forceloaded', (id, dim) => manager.forceloaded(id, dim));
+  handle('map:forceload', (id, dim, rect, add) => manager.forceload(id, dim, rect, add));
   handle('players:details', (id, uuid) => manager.playerDetails(id, uuid));
   handle('players:action', (id, uuid, action, args) => manager.playerAction(id, uuid, action, args));
   handle('servers:installChunky', (id) => manager.installChunky(id));

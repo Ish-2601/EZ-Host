@@ -68,6 +68,8 @@ Phase 1 status: all three are built. The online address was verified on 2026-10-
 
 ## Phase 1.5: Ishaan's requests (in build order)
 
+Status: all six are built (2026-10-19). Tested on a throwaway server: pregeneration, force-loading, the map and long remote-control replies. Live player edits need a real player online to test.
+
 | Feature | Why it matters |
 | --- | --- |
 | Right-click a server in the sidebar to open, rename, change settings, open its folder, or delete it (deleting asks first) | Managing servers should work the way it does everywhere else in Windows. |

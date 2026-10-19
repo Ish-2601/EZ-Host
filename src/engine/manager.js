@@ -23,6 +23,7 @@ const { Playit } = require('./playit');
 const { Rcon } = require('./rcon');
 const playersLib = require('./players');
 const { parseSnbt, plain: plainNbt } = require('./nbt');
+const worldMap = require('./world-map');
 
 const CONFIG_FILE = 'selfhost.json';
 
@@ -44,6 +45,7 @@ class ServerManager extends EventEmitter {
     this.rcons = new Map();
     this.pregen = new Map();
     this.nameCache = new Map();
+    this.mapRenderer = new worldMap.MapRenderer();
     this.playit = new Playit(dataRoot);
     this.playit.on('status', (state) => this.emit('playit', state));
     this.playit.on('log', (line) => this.emit('playit-log', line));
@@ -681,6 +683,93 @@ class ServerManager extends EventEmitter {
     playersLib.editOffline(root, action, args);
     await playersLib.writeDat(this.serverDir(id), props, uuid, root);
     return '';
+  }
+
+  // ---------- world map ----------
+
+  worldDir(id) {
+    return path.join(this.serverDir(id), this.readProperties(id)['level-name'] || 'world');
+  }
+
+  mapDimensions(id) {
+    return worldMap.listDimensions(this.worldDir(id));
+  }
+
+  checkDim(dim) {
+    if (!/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(dim)) throw new Error('Unknown dimension');
+    return dim;
+  }
+
+  /** Region coordinates that exist for a dimension. */
+  mapRegions(id, dim) {
+    const dir = worldMap.regionDir(this.worldDir(id), this.checkDim(dim));
+    if (!dir) return [];
+    return fs
+      .readdirSync(dir)
+      .map((f) => f.match(/^r\.(-?\d+)\.(-?\d+)\.mca$/))
+      .filter(Boolean)
+      .map((m) => ({ rx: Number(m[1]), rz: Number(m[2]) }));
+  }
+
+  async mapTile(id, dim, rx, rz) {
+    const dir = worldMap.regionDir(this.worldDir(id), this.checkDim(dim));
+    if (!dir || !Number.isInteger(rx) || !Number.isInteger(rz)) throw new Error('No such region');
+    const file = path.join(dir, `r.${rx}.${rz}.mca`);
+    if (!fs.existsSync(file)) throw new Error('No such region');
+    const cacheDir = path.join(this.serverDir(id), '.selfhost', 'map', dim.replace(/[:/]/g, '_'));
+    return this.mapRenderer.tile(file, cacheDir);
+  }
+
+  /** Where online players are: [{ name, uuid, x, z, dim }]. */
+  async playerPositions(id) {
+    if (!this.isRunning(id)) return [];
+    const known = this.listPlayersOf(id);
+    const out = [];
+    for (const name of this.players(id)) {
+      try {
+        const posText = await this.rcon(id, `data get entity ${name} Pos`);
+        const dimText = await this.rcon(id, `data get entity ${name} Dimension`);
+        const pos = parseSnbt(posText.slice(posText.indexOf('[')));
+        const dim = (dimText.match(/"([^"]+)"/) || [])[1] || 'minecraft:overworld';
+        const player = known.find((p) => p.name && p.name.toLowerCase() === name.toLowerCase());
+        out.push({ name, uuid: player ? player.uuid : null, x: pos[0], z: pos[2], dim });
+      } catch {
+        // player left between calls
+      }
+    }
+    return out;
+  }
+
+  /** Chunks kept loaded in a dimension, as [[cx, cz], ...]. Needs the server running. */
+  async forceloaded(id, dim) {
+    if (!this.isRunning(id)) return null;
+    const text = await this.rcon(id, `execute in ${this.checkDim(dim)} run forceload query`);
+    return worldMap.parseForceloadQuery(text);
+  }
+
+  /**
+   * Keep a rectangle of chunks loaded (add) or stop doing so (remove).
+   * Chunk coordinates are inclusive. Minecraft accepts 256 chunks per command.
+   */
+  async forceload(id, dim, { x1, z1, x2, z2 }, add) {
+    this.checkDim(dim);
+    const nums = [x1, z1, x2, z2].map(Number);
+    if (!nums.every(Number.isInteger)) throw new Error('Invalid chunk area');
+    const [ax, az, bx, bz] = [Math.min(nums[0], nums[2]), Math.min(nums[1], nums[3]), Math.max(nums[0], nums[2]), Math.max(nums[1], nums[3])];
+    if ((bx - ax + 1) * (bz - az + 1) > 4096) throw new Error('Select fewer chunks (4,096 at most)');
+    const verb = add ? 'add' : 'remove';
+    const outputs = [];
+    // Split into strips of at most 256 chunks.
+    const width = bx - ax + 1;
+    const rowsPerCmd = Math.max(1, Math.floor(256 / width));
+    for (let z = az; z <= bz; z += rowsPerCmd) {
+      for (let x = ax; x <= bx; x += 256) {
+        const xEnd = Math.min(bx, x + 255);
+        const zEnd = Math.min(bz, z + rowsPerCmd - 1);
+        outputs.push(await this.rcon(id, `execute in ${dim} run forceload ${verb} ${x * 16} ${z * 16} ${xEnd * 16} ${zEnd * 16}`));
+      }
+    }
+    return outputs.join('\n');
   }
 
   // ---------- pregeneration (Chunky) ----------
