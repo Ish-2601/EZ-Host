@@ -64,6 +64,19 @@ These come before any other feature.
 
 **Done when:** someone who has never hosted a server can create one, start it and share the address without asking for help.
 
+Phase 1 status: all three are built. The online address was verified on 2026-10-19 by pinging a running server through its playit.gg address.
+
+## Phase 1.5: Ishaan's requests (in build order)
+
+| Feature | Why it matters |
+| --- | --- |
+| Right-click a server in the sidebar to open, rename, change settings, open its folder, or delete it (deleting asks first) | Managing servers should work the way it does everywhere else in Windows. |
+| Vanilla servers (plain Minecraft, no mods) as a New server option | Not every game night needs mods. |
+| A separate online address for each server: one playit.gg tunnel per server, each server on its own port. "Get a new address" picks a fresh one; custom names need playit.gg Premium or your own domain, and the app explains this | Different groups or worlds can be shared without mixing them up. |
+| Pregenerate world button (using the Chunky mod): pick a radius, watch progress | Generating new chunks is the main cause of lag on modded servers. Pregenerating while nobody plays removes it. |
+| Players panel: head, hearts, hunger, inventory and ender chest for online and offline players, plus editing (heal, feed, give or remove items, game mode, op, kick) | Hosts want to see and help their players without typing commands. |
+| World map of explored chunks with live player heads. Select chunks to keep them loaded even with nobody nearby (for farms), and remove that again | Lets the host see the world and keep iron farms and similar builds running. |
+
 ## Phase 2: reliability
 
 | Feature | Why it matters |
@@ -81,6 +94,7 @@ These come before any other feature.
 | Feature | Why it matters |
 | --- | --- |
 | Player management: whitelist, ops, bans, with player heads | The main things hosts do once a server is running. |
+| Terrain colors on the world map (read from the world's region files) | A map you can recognize your base on is easier to use than a grid. |
 | Server settings editor for the common options (game mode, PvP, view distance, seed, spawn protection) with explanations | Editing `server.properties` by hand is error-prone. |
 | Modpack updates: "a new version is available" and a safe update that backs up first | Packs update often, and players need to match. |
 | Add or remove single mods from Modrinth | Hosts want to tweak a pack without rebuilding it. |
@@ -96,7 +110,6 @@ These come before any other feature.
 | Use the pack's official server pack when it has one | It is the pack author's tested server setup. |
 | Performance view: TPS, memory and CPU graph, lag warnings | It helps hosts find out why the game feels slow. |
 | Scheduled restarts and in-game warnings | Long-running modded servers leak memory. |
-| Multiple servers at once on different ports | Hosts with several groups of friends. |
 | Code-signed installer | Removes the SmartScreen warning. |
 | macOS and Linux builds | Friends who host on other systems. |
 
