@@ -95,11 +95,21 @@ class ServerProcess extends EventEmitter {
   }
 
   trackPlayers(line) {
-    const joined = line.match(/\]: (\w{3,16}) joined the game/);
-    const left = line.match(/\]: (\w{3,16}) left the game/);
+    // "[..]: Steve joined the game", or on 26.3+ "[..]: System chat: Steve joined the game".
+    const joined = line.match(/\]: (?:System chat: )?(\w{3,16}) joined the game/);
+    const left = line.match(/\]: (?:System chat: )?(\w{3,16}) left the game/);
     if (joined) this.players.add(joined[1]);
     else if (left) this.players.delete(left[1]);
     else return;
+    this.emit('players', [...this.players]);
+  }
+
+  /** Replace the online list (from /list), e.g. when join messages were missed. */
+  setPlayers(names) {
+    const next = new Set(names);
+    const same = next.size === this.players.size && [...next].every((n) => this.players.has(n));
+    if (same) return;
+    this.players = next;
     this.emit('players', [...this.players]);
   }
 

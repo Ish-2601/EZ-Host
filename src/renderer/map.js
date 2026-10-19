@@ -12,6 +12,8 @@ const WorldMap = (() => {
     tiles: new Map(), // "rx,rz" -> { img, loading, mtime, structures }
     style: 'terrain', // 'terrain' | 'biomes'
     refreshEvery: 10, // seconds; 0 = only when Refresh is clicked
+    // Structure types hidden on the map; click them in the legend to show them.
+    hiddenStructures: new Set(['Trial chambers', 'Ruined portal', 'Ocean ruin']),
     forced: [],
     players: [],
     heads: new Map(),
@@ -178,7 +180,7 @@ const WorldMap = (() => {
         if (seen.has(key)) continue;
         seen.add(key);
         const style = structureStyle(st.id);
-        if (!style) continue;
+        if (!style || m.hiddenStructures.has(style.label)) continue;
         const [x, z] = toScreen(st.cx * 16 + 8, st.cz * 16 + 8);
         if (x < -20 || z < -20 || x > w + 20 || z > h + 20) continue;
         g.fillStyle = 'rgba(0,0,0,0.6)';
@@ -210,11 +212,32 @@ const WorldMap = (() => {
       }
     }
     legend.classList.toggle('hidden', !present.size);
-    fill(legend, [...present.values()].map((st) => {
-      const swatch = el('i', {}, st.letter);
-      swatch.style.background = st.color;
-      return el('span', {}, swatch, st.label);
-    }));
+    fill(legend,
+      el('span', { class: 'legend-hint' }, 'Show on map:'),
+      [...present.values()].map((st) => {
+        const shown = !m.hiddenStructures.has(st.label);
+        const swatch = el('i', {}, st.letter);
+        swatch.style.background = st.color;
+        const box = el('input', { type: 'checkbox' });
+        box.checked = shown;
+        box.onchange = () => {
+          if (box.checked) m.hiddenStructures.delete(st.label);
+          else m.hiddenStructures.add(st.label);
+          saveHidden();
+          draw();
+        };
+        return el('label', { class: `legend-item${shown ? '' : ' off'}` }, box, swatch, st.label);
+      })
+    );
+  }
+
+  function saveHidden() {
+    try {
+      localStorage.setItem('map.hiddenStructures', JSON.stringify([...m.hiddenStructures]));
+    } catch {
+      // storage unavailable: the choice lasts until the app closes
+    }
+    renderLegend();
   }
 
   function drawCrown(g, x, z) {
@@ -473,6 +496,12 @@ const WorldMap = (() => {
       }
     };
     m.style = saved('map.style', 'terrain');
+    try {
+      const hidden = JSON.parse(saved('map.hiddenStructures', 'null'));
+      if (Array.isArray(hidden)) m.hiddenStructures = new Set(hidden);
+    } catch {
+      // keep the defaults
+    }
     m.refreshEvery = Number(saved('map.refreshEvery', '10'));
     $('map-style').value = m.style;
     $('map-refresh-every').value = String(m.refreshEvery);

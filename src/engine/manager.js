@@ -592,7 +592,7 @@ class ServerManager extends EventEmitter {
   // ---------- remote control (RCON) ----------
 
   /** Run a command on a running server and return its output. */
-  async rcon(id, command) {
+  async rcon(id, command, retried = false) {
     const proc = this.processes.get(id);
     if (!proc || !proc.child) throw new Error('Start the server first');
     if (proc.status !== 'running') throw new Error('Wait until the server has finished starting');
@@ -608,8 +608,22 @@ class ServerManager extends EventEmitter {
     } catch (err) {
       client.close();
       this.rcons.delete(id);
+      // Minecraft 26.3 drops RCON connections that sit idle for a couple of
+      // seconds; reconnect once and try again.
+      if (!retried && /closed|not connected|ECONNRESET|EPIPE/i.test(err.message)) return this.rcon(id, command, true);
       throw err;
     }
+  }
+
+  /** Ask the server who is online (/list) and update the app's list to match. */
+  async syncOnlinePlayers(id) {
+    if (!this.isRunning(id)) return this.players(id);
+    const out = await this.rcon(id, 'list');
+    const m = out.match(/online:\s*(.*)$/s);
+    const names = m && m[1].trim() ? m[1].split(',').map((n) => n.trim()).filter((n) => /^\w{3,16}$/.test(n)) : [];
+    const proc = this.processes.get(id);
+    if (proc) proc.setPlayers(names);
+    return names;
   }
 
   closeRcon(id) {
@@ -790,6 +804,7 @@ class ServerManager extends EventEmitter {
 
   /** Fill in names missing from usercache.json using Mojang's public profile lookup. */
   async listPlayersWithNames(id) {
+    await this.syncOnlinePlayers(id).catch(() => {});
     const list = this.listPlayersOf(id);
     await Promise.all(
       list
@@ -822,6 +837,7 @@ class ServerManager extends EventEmitter {
 
   /** Health, hunger, inventory and ender chest; live for online players, from the save file otherwise. */
   async playerDetails(id, uuid) {
+    await this.syncOnlinePlayers(id).catch(() => {});
     const player = this.findPlayer(id, uuid);
     if (player.online && this.isRunning(id)) {
       const out = await this.rcon(id, `data get entity ${player.name}`);
@@ -838,6 +854,7 @@ class ServerManager extends EventEmitter {
    * Online players get commands; offline players have their save file edited.
    */
   async playerAction(id, uuid, action, args = {}) {
+    await this.syncOnlinePlayers(id).catch(() => {});
     const player = this.findPlayer(id, uuid);
     const running = this.isRunning(id);
     if (player.online && running) {
@@ -903,6 +920,7 @@ class ServerManager extends EventEmitter {
   /** Where online players are: [{ name, uuid, x, z, dim }]. */
   async playerPositions(id) {
     if (!this.isRunning(id)) return [];
+    await this.syncOnlinePlayers(id).catch(() => {});
     const known = this.listPlayersOf(id);
     const out = [];
     for (const name of this.players(id)) {

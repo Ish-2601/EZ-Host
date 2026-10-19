@@ -302,3 +302,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   .status-card { flex-direction: column; align-items: stretch; }
 }
 .ok { color: var(--accent); }
+
+.map-legend .legend-hint { color: var(--muted); }
+.map-legend .legend-item { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.map-legend .legend-item input { margin: 0; accent-color: var(--accent); }
+.map-legend .legend-item.off { opacity: .55; }
