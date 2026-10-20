@@ -58,7 +58,7 @@ const CHANNEL_PERMISSION = {
   'settings:notifications': 'settings', 'settings:setNotifications': 'settings',
   'minecraft:versions': 'server',
   'zomboid:localConfigs': 'server', 'servers:createZomboid': 'settings', 'servers:retryZomboidSetup': 'settings', 'zomboid:settings': 'settings', 'zomboid:saveSettings': 'settings',
-  'zomboid:collections': 'server', 'zomboid:previewCollection': 'server', 'zomboid:installCollection': 'settings', 'zomboid:sandbox': 'settings', 'zomboid:items': 'players', 'zomboid:serverOptions': 'settings', 'zomboid:saveServerOptions': 'settings', 'zomboid:saveSandbox': 'settings',
+  'zomboid:collections': 'server', 'zomboid:previewCollection': 'server', 'zomboid:installCollection': 'settings', 'zomboid:sandbox': 'settings', 'zomboid:items': 'players', 'zomboid:presets': 'server', 'zomboid:applyPreset': 'settings', 'zomboid:vehicles': 'players', 'zomboid:perks': 'players', 'zomboid:mapInfo': 'server', 'zomboid:mapTile': 'server', 'zomboid:positions': 'players', 'zomboid:serverAction': 'tools', 'zomboid:serverOptions': 'settings', 'zomboid:saveServerOptions': 'settings', 'zomboid:saveSandbox': 'settings',
   'settings:app': 'server', 'settings:setApp': 'settings',
   'mods:overview': 'server', 'mods:setEnabled': 'settings',
   'perf:advice': 'server', 'perf:applySettings': 'settings', 'perf:installMods': 'settings', 'servers:setMemory': 'settings',
@@ -363,6 +363,7 @@ function registerIpc() {
     const allowed = {};
     if (typeof patch.name === 'string' && patch.name.trim()) allowed.name = patch.name.trim().slice(0, 64);
     if (typeof patch.autoRestart === 'boolean') allowed.autoRestart = patch.autoRestart;
+    if (typeof patch.modUpdateRestart === 'boolean') allowed.modUpdateRestart = patch.modUpdateRestart;
     if (Number.isInteger(patch.memoryMb) && patch.memoryMb >= 1024 && patch.memoryMb <= 65536) {
       allowed.memoryMb = patch.memoryMb;
     }
@@ -422,6 +423,14 @@ function registerIpc() {
   handle('zomboid:installCollection', (id, link) => manager.zomboid.installCollection(id, link));
   handle('zomboid:sandbox', (id) => manager.zomboid.sandbox(id));
   handle('zomboid:items', (id) => manager.zomboid.items(id));
+  handle('zomboid:presets', () => manager.zomboid.presets().map(({ id, name, description }) => ({ id, name, description })));
+  handle('zomboid:applyPreset', (id, preset) => manager.zomboid.applyPreset(id, preset));
+  handle('zomboid:vehicles', (id) => manager.zomboid.vehicles(id));
+  handle('zomboid:perks', () => require('../games/zomboid').PERKS);
+  handle('zomboid:mapInfo', () => manager.zomboid.mapInfo());
+  handle('zomboid:mapTile', (level, tx, ty) => manager.zomboid.mapTile(level, tx, ty));
+  handle('zomboid:positions', (id) => manager.zomboid.playerPositions(id));
+  handle('zomboid:serverAction', (id, action, args) => manager.zomboid.serverAction(id, action, args || {}));
   handle('zomboid:serverOptions', (id) => manager.zomboid.serverOptions(id));
   handle('zomboid:saveServerOptions', (id, values) => manager.zomboid.saveServerOptions(id, values || {}));
   handle('zomboid:saveSandbox', (id, values) => manager.zomboid.saveSandbox(id, values || {}));

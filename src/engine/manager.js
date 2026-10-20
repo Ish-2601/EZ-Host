@@ -1040,9 +1040,22 @@ class ServerManager extends EventEmitter {
         if (!this.startupStates.has(id)) return;
         startup('loading', p.failure ? p.failure.summary : p.stalled ? `${p.stage} (no output for 5 minutes; it may be stuck)` : p.stage, { done: p.percent, total: 100 });
       });
-      proc.on('line', (text, stream) => this.emit('console', id, { text, stream }));
+      proc.on('line', (text, stream) => {
+        this.emit('console', id, { text, stream });
+        if (/mods need update/i.test(text) && !/no mods need update/i.test(text)) this.zomboidModsUpdated(id);
+      });
       proc.on('status', (status) => {
+        if (status !== 'running') {
+          clearInterval(this.modCheckTimers?.get(id));
+          this.modCheckTimers?.delete(id);
+        }
         if (status === 'running') {
+          // Friends with a newer mod version than the server get kicked; check now and then.
+          this.modCheckTimers = this.modCheckTimers || new Map();
+          clearInterval(this.modCheckTimers.get(id));
+          this.modCheckTimers.set(id, setInterval(() => {
+            if (this.readConfig(id).modUpdateRestart !== false) this.rcon(id, 'checkModsNeedUpdate').catch(() => {});
+          }, 30 * 60 * 1000));
           if (proc.startupMs) this.updateConfig(id, { lastStartMs: proc.startupMs }).catch(() => {});
           this.startupStates.delete(id);
           this.emit('startup', id, { phase: 'ready', label: 'Server is ready', startedAt });
@@ -1089,6 +1102,32 @@ class ServerManager extends EventEmitter {
       this.emit('status', id, 'stopped');
       throw err;
     }
+  }
+
+  /** A Workshop mod changed: warn players, then restart so everyone gets the new version. */
+  zomboidModsUpdated(id) {
+    if (this.readConfig(id).modUpdateRestart === false) {
+      this.emit('console', id, { text: 'A Workshop mod was updated. Restart the server so friends can join with the new version.', stream: 'system' });
+      return;
+    }
+    this.modRestartPending = this.modRestartPending || new Set();
+    if (this.modRestartPending.has(id)) return;
+    this.modRestartPending.add(id);
+    this.emit('console', id, { text: 'A Workshop mod was updated. Restarting in 5 minutes so everyone gets the new version.', stream: 'system' });
+    const say = (text) => this.rcon(id, `servermsg "${text}"`).catch(() => {});
+    say('A mod was updated. The server restarts in 5 minutes.');
+    const t1 = setTimeout(() => say('Server restarts in 1 minute for a mod update.'), 4 * 60 * 1000);
+    const t2 = setTimeout(async () => {
+      this.modRestartPending.delete(id);
+      if (!this.isRunning(id) || this.shuttingDown) return;
+      try {
+        await this.stop(id);
+        await this.start(id);
+      } catch (err) {
+        this.emit('console', id, { text: `Restart after a mod update failed: ${err.message}`, stream: 'system' });
+      }
+    }, 5 * 60 * 1000);
+    for (const t of [t1, t2]) if (t.unref) t.unref();
   }
 
   scheduleCrashRestart(id) {
@@ -2029,8 +2068,10 @@ class ServerManager extends EventEmitter {
 
   async createBackup(id, reason = 'Manual restore point') {
     if (this.isRunning(id)) {
-      await this.rcon(id, 'save-all flush');
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Zomboid saves with "save" and takes a few seconds to write the world.
+      const zomboid = this.readConfig(id).game === 'zomboid';
+      await this.rcon(id, zomboid ? 'save' : 'save-all flush');
+      await new Promise((resolve) => setTimeout(resolve, zomboid ? 5000 : 1000));
     }
     const saved = await backupLib.createBackup(this.serverDir(id), { reason, settings: this.backupSettings(id) });
     await backupLib.pruneBackups(this.serverDir(id), this.backupSettings(id).retention);
@@ -2122,7 +2163,9 @@ class ServerManager extends EventEmitter {
       else if (task.type === 'restart') {
         const wasRunning = this.isRunning(id);
         if (wasRunning && task.warningMinutes && !this.shuttingDown) {
-          this.sendCommand(id, `say Server restart in ${task.warningMinutes} minute(s).`);
+          const warning = `Server restart in ${task.warningMinutes} minute(s).`;
+          if (this.readConfig(id).game === 'zomboid') await this.rcon(id, `servermsg "${warning}"`).catch(() => {});
+          else this.sendCommand(id, `say ${warning}`);
           const warningKey = `${id}:${task.id}`;
           await new Promise((resolve) => {
             const timer = setTimeout(() => { this.warningTimers.delete(warningKey); resolve(); }, task.warningMinutes * 60000);

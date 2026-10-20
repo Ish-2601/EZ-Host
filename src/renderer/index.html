@@ -63,8 +63,13 @@
           </div>
           <div id="zbnew-notes" class="muted small"></div>
         </section>
+        <section class="card zbnew-fresh-only">
+          <h3><span class="step-dot active">3</span> What kind of world</h3>
+          <p class="muted small">The game's own difficulty presets. You can fine-tune every rule after the server is made.</p>
+          <div id="zbnew-presets" class="pack-grid"></div>
+        </section>
         <section class="card form">
-          <h3><span class="step-dot active">3</span> Server settings</h3>
+          <h3><span class="step-dot active">4</span> Server settings</h3>
           <label>Server name (shown to players) <input id="zbnew-name" type="text" maxlength="64" required /></label>
           <div class="zbnew-fresh-only grid-2">
             <label>Max players <input id="zbnew-max" type="number" min="1" max="100" value="16" /></label>
@@ -76,6 +81,31 @@
             <label class="checkbox"><input id="zbnew-pvp" type="checkbox" checked /> Players can hurt each other (PvP)</label>
             <label class="checkbox"><input id="zbnew-public" type="checkbox" /> List in Zomboid's public server browser</label>
           </div>
+          <div class="check-grid zbnew-fresh-only">
+            <label class="checkbox"><input id="zbnew-whitelist" type="checkbox" /> Only friends I add can join (whitelist)</label>
+            <label class="checkbox"><input id="zbnew-pause" type="checkbox" checked /> Pause the world when nobody is online</label>
+            <label class="checkbox"><input id="zbnew-safehouse" type="checkbox" checked /> Players can claim safehouses</label>
+            <label class="checkbox"><input id="zbnew-sleep" type="checkbox" /> Players can sleep</label>
+            <label class="checkbox"><input id="zbnew-chat" type="checkbox" checked /> Global chat</label>
+            <label class="checkbox"><input id="zbnew-names" type="checkbox" checked /> Show names above players</label>
+          </div>
+          <div class="grid-2 zbnew-fresh-only">
+            <label>Loot comes back
+              <select id="zbnew-loot">
+                <option value="0">Never</option>
+                <option value="168">After a week (in-game)</option>
+                <option value="336">After two weeks</option>
+                <option value="720" selected>After a month</option>
+              </select></label>
+            <label>Save the world every
+              <select id="zbnew-save">
+                <option value="0">Only when stopping</option>
+                <option value="10">10 minutes</option>
+                <option value="30" selected>30 minutes</option>
+                <option value="60">Hour</option>
+              </select></label>
+          </div>
+          <label class="zbnew-fresh-only">Welcome message (shown when someone joins) <input id="zbnew-welcome" type="text" maxlength="300" placeholder="Welcome! Be nice and stay alive." /></label>
           <label>Memory: <strong id="zbnew-ram-label"></strong><input id="zbnew-ram" type="range" min="2048" step="512" /><span id="zbnew-ram-hint" class="muted small"></span></label>
           <div class="ram-suggest" id="zbnew-ram-suggest"></div>
         </section>
@@ -336,6 +366,18 @@
       </div>
 
       <div id="tab-world" class="tab-panel hidden">
+        <div class="card zb-only">
+          <div class="map-head">
+            <h3>Map</h3>
+            <span class="spacer"></span>
+            <label class="checkbox small"><input id="zbmap-names" type="checkbox" checked /> Names</label>
+            <button id="zbmap-fit" class="btn btn-ghost" type="button">Whole map</button>
+            <button id="zbmap-refresh" class="btn btn-ghost" type="button">Refresh</button>
+          </div>
+          <div id="zbmap-wrap" class="zbmap-wrap"><canvas id="zbmap"></canvas><div id="zbmap-coords" class="zbmap-coords"></div></div>
+          <p class="muted small">Players show where they were when the server last saved (every few minutes, and when they leave). Drag to move, scroll to zoom. Updates every 10 seconds.</p>
+          <ul id="zbmap-players" class="zbmap-players"></ul>
+        </div>
         <div class="card">
           <div class="map-head">
             <h3>World map</h3>
@@ -469,6 +511,12 @@
           <section id="tool-share-card" class="card"><h3>Share server status and join steps</h3><p class="muted small">Run an optional live page that refreshes every 10 seconds on your PC or LAN. Remote friends need a router port-forward for port 27892. You can also export a themed HTML snapshot or copy join details.</p><label><input id="status-lan" type="checkbox" /> Let devices on my LAN view the live status page</label><div class="row wrap"><button id="live-status-start" class="btn">Start live page</button><button id="live-status-stop" class="btn btn-danger hidden">Stop live page</button><button id="live-status-open" class="btn hidden">Open live page</button><button id="live-status-copy" class="btn hidden">Copy live page address</button></div><div id="live-status-details" class="muted small"></div><div class="row wrap"><button id="share-status-page" class="btn btn-primary">Export status page</button><button id="copy-join-info" class="btn">Copy join instructions</button></div></section>
           <section id="notification-card" class="card"><h3>Notifications</h3><p class="muted small">Windows notifications for server state and attention events.</p><div class="check-grid"><label><input id="notify-start" type="checkbox" checked /> Started</label><label><input id="notify-stop" type="checkbox" checked /> Stopped</label><label><input id="notify-crash" type="checkbox" checked /> Crashed</label><label><input id="notify-attention" type="checkbox" checked /> Needs attention</label></div><button id="notify-save" class="btn">Save notifications</button></section>
           <section id="command-card" class="card"><h3>Reusable command buttons</h3><p class="muted small">Save safe, commonly used server commands for one-click use while the server is online.</p><form id="quick-command-form" class="grid-2"><label>Button name<input id="quick-command-name" maxlength="32" placeholder="Save world" required /></label><label>Command<input id="quick-command-text" maxlength="256" placeholder="save-all" required /></label><button class="btn btn-primary" type="submit">Add command button</button></form><div id="quick-command-list" class="tool-list"></div></section>
+          <section id="zb-actions-card" class="card zb-only">
+            <h3>World actions</h3>
+            <p class="muted small">Quick events and messages for everyone on the server. The server must be running.</p>
+            <form id="zb-msg-form" class="search"><input id="zb-msg" type="text" maxlength="200" placeholder="Message to everyone" autocomplete="off" /><button class="btn btn-primary" type="submit">Send</button></form>
+            <div class="row wrap" id="zb-action-buttons"></div>
+          </section>
           <section id="activity-card" class="card"><h3>Activity log</h3><p class="muted small">Recent setting, file, backup, and server changes, including who made them.</p><div id="activity-list" class="activity-list"></div></section>
           <section id="sftp-card" class="card">
             <h3>SFTP access</h3>
@@ -497,6 +545,7 @@
             <label class="checkbox"><input id="zb-pvp" type="checkbox" /> Players can hurt each other (PvP)</label>
             <label class="checkbox"><input id="zb-pause" type="checkbox" /> Pause the world when nobody is online</label>
             <label class="checkbox"><input id="zb-public" type="checkbox" /> List in Zomboid's public server browser</label>
+            <label class="checkbox"><input id="zb-modrestart" type="checkbox" /> Restart by itself when a Workshop mod updates (players get a 5-minute warning)</label>
           </div>
           <p class="muted small">Zomboid has no server icon in its server list, so there is nothing to set for that. Changes apply on the next start.</p>
           <div class="row"><button class="btn btn-primary" type="submit">Save</button><span id="zb-saved" class="muted small"></span></div>
@@ -510,6 +559,7 @@
         <div id="zb-rules-card" class="card zb-only">
           <div class="map-head"><h3>World rules</h3><span class="spacer"></span><input id="zb-rules-search" type="search" placeholder="Search rules, e.g. loot, speed" autocomplete="off" /></div>
           <p id="zb-rules-note" class="muted small">Zombies, loot, day length, the start date and everything else about the world. Most rules apply on the next start; a few (like the start date) only matter for a new world.</p>
+          <div class="row wrap"><span class="muted small">Start from a preset:</span><select id="zb-rules-preset" style="width:auto"></select><button id="zb-rules-preset-apply" class="btn" type="button">Apply preset</button></div>
           <div id="zb-rules"></div>
           <div class="row"><button id="zb-rules-save" class="btn btn-primary" type="button">Save world rules</button><button id="zb-rules-reset" class="btn btn-ghost" type="button">Undo changes</button><span id="zb-rules-saved" class="muted small"></span></div>
         </div>

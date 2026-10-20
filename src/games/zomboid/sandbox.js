@@ -144,6 +144,31 @@ function writeSandbox(file, values, extra = []) {
   fs.writeFileSync(file, out.join('\n'));
 }
 
+/**
+ * The game's own presets (media/lua/shared/Sandbox/*.lua, "return { Zombies = 4, ZombieLore = { ... } }")
+ * as [{ id, values: { 'ZombieLore.Speed': 2, ... } }].
+ */
+function readPresets(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lua') && f !== 'SandboxVars.lua')) {
+    const values = {};
+    const stack = [];
+    for (const line of fs.readFileSync(require('path').join(dir, file), 'utf8').split(/\r?\n/)) {
+      if (/^\s*return\s*\{\s*$/.test(line)) { stack.push('__root'); continue; }
+      const table = line.match(TABLE_RE);
+      if (table) { stack.push(table[1]); continue; }
+      if (/^\s*\},?\s*$/.test(line)) { stack.pop(); continue; }
+      const m = line.match(VALUE_RE);
+      if (!m || !stack.length || m[2] === 'Version') continue;
+      const parsed = parseValue(m[3]);
+      if (parsed) values[[...stack.slice(1), m[2]].join('.')] = parsed.value;
+    }
+    out.push({ id: file.slice(0, -4), values });
+  }
+  return out;
+}
+
 // The options most people change, shown first.
 const COMMON = [
   'Zombies', 'Distribution', 'ZombieLore.Speed', 'ZombieLore.Strength', 'ZombieLore.Toughness', 'ZombieLore.Transmission',
@@ -152,4 +177,4 @@ const COMMON = [
   'StarterKit', 'MultiplierConfig.Global',
 ];
 
-module.exports = { parseSandbox, readSandbox, writeSandbox, COMMON };
+module.exports = { parseSandbox, readSandbox, writeSandbox, readPresets, COMMON };

@@ -16,13 +16,17 @@ const zcfg = require('./config');
 const zmods = require('./mods');
 const sandbox = require('./sandbox');
 const workshop = require('./workshop');
-const { listItems } = require('./items');
+const { listItems, listVehicles } = require('./items');
+const { ZomboidMap, playerPositions } = require('./map');
 const { modSandboxFields } = require('./mod-sandbox');
 const serverOptions = require('./server-options');
 
 const APP_ID = 380870;
 const NAME_RE = /^[A-Za-z0-9_ .-]{1,32}$/;
 const ACCESS_LEVELS = ['admin', 'moderator', 'overseer', 'gm', 'observer', 'none'];
+// Skills that /addxp accepts (Build 42 perk ids).
+const PERKS = ['Fitness', 'Strength', 'Sprinting', 'Lightfoot', 'Nimble', 'Sneak', 'Axe', 'Blunt', 'SmallBlunt', 'LongBlade', 'SmallBlade', 'Spear', 'Maintenance', 'Woodwork', 'Cooking', 'Farming', 'Doctor', 'Electricity', 'MetalWelding', 'Mechanics', 'Tailoring', 'Aiming', 'Reloading', 'Fishing', 'Trapping', 'PlantScavenging', 'FlintKnapping', 'Masonry', 'Pottery', 'Carving', 'Husbandry', 'Tracking', 'Blacksmith', 'Butchering', 'Glassmaking'];
+const ID_RE = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/;
 
 const quote = (s) => `"${String(s).replace(/["\r\n]/g, '')}"`;
 
@@ -37,6 +41,62 @@ class ZomboidGame {
   /** Workshop mods on this PC: the host's Steam downloads plus ones the app fetched. */
   workshop() {
     return zcfg.scanWorkshop([workshop.steamcmdWorkshopRoot(path.join(this.steamcmdDir, 'steamcmd.exe'))]);
+  }
+
+  /** Vehicles that can be spawned next to a player (game plus turned-on mods). */
+  vehicles(id) {
+    const enabled = zcfg.splitList(zcfg.readIni(this.iniFile(id)).Mods);
+    const key = `v|${enabled.join(';')}`;
+    this.itemCache = this.itemCache || new Map();
+    if (this.itemCache.has(key)) return this.itemCache.get(key);
+    const wanted = new Set(enabled);
+    const list = listVehicles(this.installDir, this.workshop().flatMap((w) => w.mods).filter((m) => wanted.has(m.id) && m.dir));
+    this.itemCache.set(key, list);
+    return list;
+  }
+
+  /** The in-game map (tiles from the server's own files). */
+  map() {
+    if (!this.mapReader) this.mapReader = new ZomboidMap(this.installDir);
+    return this.mapReader;
+  }
+
+  mapInfo() {
+    return this.map().mapInfo();
+  }
+
+  /** One map tile as a data URL, or null. */
+  mapTile(level, tx, ty) {
+    const png = this.map().tile(level, tx, ty);
+    return png ? `data:image/png;base64,${png.toString('base64')}` : null;
+  }
+
+  /** Where each character was when the server last saved: [{ username, character, x, y, z, dead, online }]. */
+  playerPositions(id) {
+    const config = this.m.readConfig(id);
+    const online = new Set(((this.m.processes.get(id) || {}).players ? [...this.m.processes.get(id).players] : []).map((n) => n.toLowerCase()));
+    return playerPositions(path.join(this.cacheDir(id), 'Saves', 'Multiplayer', config.serverName, 'players.db'))
+      .map((p) => ({ ...p, online: online.has(p.username.toLowerCase()) }));
+  }
+
+  /** World-wide admin actions for the Tools tab. */
+  async serverAction(id, action, args = {}) {
+    if (!this.m.isRunning(id)) throw new Error('Start the server first');
+    const commands = {
+      message: () => {
+        const text = String(args.text || '').replace(/["\r\n]/g, ' ').trim().slice(0, 200);
+        if (!text) throw new Error('Type a message');
+        return `servermsg ${quote(text)}`;
+      },
+      save: () => 'save',
+      'rain-start': () => 'startrain',
+      'rain-stop': () => 'stoprain',
+      helicopter: () => 'chopper',
+      gunshot: () => 'gunshot',
+      'check-mods': () => 'checkModsNeedUpdate',
+    };
+    if (!commands[action]) throw new Error('Unknown action');
+    return this.m.rcon(id, commands[action]());
   }
 
   /** Items players can be given: the game's plus the server's turned-on mods. Cached until mods change. */
@@ -112,7 +172,7 @@ class ZomboidGame {
   }
 
   /** Create a Zomboid server, optionally copying one of the host's own server configs. */
-  async create({ name, memoryMb = 6144, copyFrom = null, collectionId = null, settings = null }) {
+  async create({ name, memoryMb = 6144, copyFrom = null, collectionId = null, settings = null, preset = null, options = null }) {
     if (copyFrom && !this.localConfigs().some((c) => c.name === copyFrom)) throw new Error('That Zomboid server config was not found');
     const id = await this.m.createConfig(name || copyFrom || 'Zomboid server', memoryMb, { type: 'zomboid', copyFrom });
     const ports = this.freePorts(id);
@@ -127,10 +187,10 @@ class ZomboidGame {
       rconPassword: crypto.randomBytes(12).toString('hex'),
       adminPassword: crypto.randomBytes(12).toString('hex'),
       eulaAccepted: true, // Zomboid has no separate server licence prompt
-      setupOptions: { copyFrom, collectionId, settings },
+      setupOptions: { copyFrom, collectionId, settings, preset, options },
     });
 
-    return this.beginSetup(id, { copyFrom, collectionId, settings });
+    return this.beginSetup(id, { copyFrom, collectionId, settings, preset, options });
   }
 
   /** Continue an interrupted first-time setup without creating another server. */
@@ -144,10 +204,12 @@ class ZomboidGame {
       copyFrom: options.copyFrom ?? (config.source && config.source.copyFrom) ?? null,
       collectionId: options.collectionId || null,
       settings: options.settings || null,
+      preset: options.preset || null,
+      options: options.options || null,
     });
   }
 
-  beginSetup(id, { copyFrom = null, collectionId = null, settings = null } = {}) {
+  beginSetup(id, { copyFrom = null, collectionId = null, settings = null, preset = null, options = null } = {}) {
     this.m.installing.add(id);
     this.m.emit('status', id, 'installing');
     const lines = this.m.installLogs.get(id) || [];
@@ -180,6 +242,20 @@ class ZomboidGame {
         Open: copyFrom && ini.Open ? ini.Open : String(!listOn),
       });
       if (settings) this.saveSettings(id, settings);
+      if (preset && !copyFrom) {
+        const chosen = this.presets().find((p) => p.id === preset);
+        if (chosen) {
+          sandbox.writeSandbox(this.sandboxFile(id), chosen.values);
+          log(`Applied the "${chosen.name}" world preset.`);
+        }
+      }
+      if (options) {
+        // Server settings go to the .ini; anything else (like loot respawn) is a world rule.
+        const iniPatch = serverOptions.cleanServerOptions(this.iniFile(id), options);
+        this.writeIni(id, iniPatch);
+        const rules = Object.fromEntries(Object.entries(options).filter(([k]) => !(k in iniPatch)));
+        if (Object.keys(rules).length && fs.existsSync(this.sandboxFile(id))) sandbox.writeSandbox(this.sandboxFile(id), rules);
+      }
       if (collectionId) await this.applyCollection(id, collectionId, { log, progress });
       await this.m.updateConfig(id, {
         installed: true,
@@ -243,6 +319,31 @@ class ZomboidGame {
   sandboxFile(id) {
     const config = this.m.readConfig(id);
     return path.join(this.cacheDir(id), 'Server', `${config.serverName}_SandboxVars.lua`);
+  }
+
+  /** The game's world presets with their names: [{ id, name, description, values }]. */
+  presets() {
+    const media = path.join(this.installDir, 'media');
+    let ui = {};
+    try {
+      ui = JSON.parse(fs.readFileSync(path.join(media, 'lua', 'shared', 'Translate', 'EN', 'UI.json'), 'utf8').replace(/,(\s*[}\]])/g, '$1'));
+    } catch {
+      // names fall back to file names
+    }
+    const order = ['Apocalypse', 'Survivor', 'Builder', 'Outbreak', 'Rising', 'Extinction', 'SixMonthsLater'];
+    return sandbox.readPresets(path.join(media, 'lua', 'shared', 'Sandbox'))
+      .map((p) => ({ ...p, name: ui[`UI_NewGame_${p.id}`] || p.id.replace(/([a-z])([A-Z])/g, '$1 $2'), description: ui[`UI_NewGame_${p.id}_desc`] || '' }))
+      .sort((a, b) => (order.indexOf(a.id) + 1 || 99) - (order.indexOf(b.id) + 1 || 99));
+  }
+
+  /** Apply a preset to an existing server's world rules. */
+  async applyPreset(id, presetId) {
+    const running = Boolean(this.m.processes.get(id) && this.m.processes.get(id).child);
+    if (running) throw new Error('Stop the server before changing world rules');
+    const chosen = this.presets().find((p) => p.id === presetId);
+    if (!chosen) throw new Error('Unknown preset');
+    sandbox.writeSandbox(this.sandboxFile(id), chosen.values);
+    return this.sandbox(id);
   }
 
   /** World rule options added by the server's turned-on mods. */
@@ -501,6 +602,22 @@ class ZomboidGame {
         return [`teleportplayer ${quote(args.target)} ${n}`];
       case 'godmode': return [`godmodeplayer ${n} -${args.on === false ? 'false' : 'true'}`];
       case 'invisible': return [`invisibleplayer ${n} -${args.on === false ? 'false' : 'true'}`];
+      case 'xp': {
+        if (!PERKS.includes(args.perk)) throw new Error('Choose a skill');
+        const amount = Math.max(1, Math.min(100000, Math.floor(Number(args.amount) || 0)));
+        return [`addxp ${n} ${args.perk}=${amount}`];
+      }
+      case 'vehicle': {
+        const vehicle = String(args.vehicle || '').trim();
+        if (!ID_RE.test(vehicle)) throw new Error('Choose a vehicle');
+        return [`addvehicle ${quote(vehicle)} ${n}`];
+      }
+      case 'noclip': return [`noclip ${n} -${args.on === false ? 'false' : 'true'}`];
+      case 'horde': {
+        const count = Math.max(1, Math.min(200, Math.floor(Number(args.count) || 10)));
+        return [`createhorde ${count} ${n}`];
+      }
+      case 'lightning': return [`lightning ${n}`];
       case 'give': {
         const item = String(args.item || '').trim();
         if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(item)) throw new Error('Type an item id like Base.Axe');
@@ -603,4 +720,4 @@ class ZomboidGame {
   }
 }
 
-module.exports = { ZomboidGame, APP_ID };
+module.exports = { ZomboidGame, APP_ID, PERKS };

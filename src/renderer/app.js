@@ -466,7 +466,8 @@ function zbRamSuggestion() {
 
 async function openZomboidNew() {
   showView('zbnew');
-  state.zbNew = { copyFrom: null, collection: null, extra: [], configs: [] };
+  state.zbNew = { copyFrom: null, collection: null, extra: [], configs: [], preset: 'Apocalypse', presets: [] };
+  attempt(() => api.zomboidPresets()).then((p) => { if (state.zbNew) { state.zbNew.presets = p || []; renderZomboidNew(); } });
   $('zbnew-name').value = 'Zomboid server';
   $('zbnew-link').value = '';
   setupRamSlider($('zbnew-ram'), $('zbnew-ram-label'), recommendedZomboidRam(0, 16), $('zbnew-ram-hint'));
@@ -512,6 +513,9 @@ function renderZomboidNew() {
         renderZomboidNew();
       },
     })));
+  fill($('zbnew-presets'),
+    zbCard({ title: 'Game default', sub: 'Zomboid\'s standard server rules.', glyph: '⚙', label: 'World', selected: !z.preset, onclick: () => { z.preset = null; renderZomboidNew(); } }),
+    z.presets.map((p) => zbCard({ title: p.name, sub: p.description || 'One of the game\'s own presets.', glyph: '☣', label: 'World', selected: z.preset === p.id, onclick: () => { z.preset = p.id; renderZomboidNew(); } })));
   const found = z.found ? z.found.collections : [];
   const list = [...z.extra, ...found.filter((c) => !z.extra.some((x) => x.id === c.id))];
   fill($('zbnew-collections'),
@@ -525,7 +529,7 @@ function renderZomboidNew() {
   if (z.found) fill($('zbnew-notes'), z.found.notes.map((n) => el('div', {}, n)));
   zbRamSuggestion();
   $('zbnew-summary').textContent = [
-    z.copyFrom ? `Copy of ${z.copyFrom}` : 'New world',
+    z.copyFrom ? `Copy of ${z.copyFrom}` : `New world${z.preset ? ` (${(z.presets.find((p) => p.id === z.preset) || {}).name || z.preset})` : ''}`,
     z.collection ? `+ ${z.collection.title} (${z.collection.items} mods)` : null,
   ].filter(Boolean).join(' ');
 }
@@ -563,6 +567,18 @@ async function createZomboidServer(event) {
     memoryMb: Number($('zbnew-ram').value),
     copyFrom: z.copyFrom,
     collectionId: z.collection ? z.collection.id : null,
+    preset: z.copyFrom ? null : z.preset,
+    options: z.copyFrom ? null : {
+      Open: !$('zbnew-whitelist').checked,
+      PauseEmpty: $('zbnew-pause').checked,
+      PlayerSafehouse: $('zbnew-safehouse').checked,
+      SleepAllowed: $('zbnew-sleep').checked,
+      GlobalChat: $('zbnew-chat').checked,
+      DisplayUserName: $('zbnew-names').checked,
+      HoursForLootRespawn: Number($('zbnew-loot').value),
+      SaveWorldEveryMinutes: Number($('zbnew-save').value),
+      ...($('zbnew-welcome').value.trim() ? { ServerWelcomeMessage: $('zbnew-welcome').value.trim() } : {}),
+    },
     settings: z.copyFrom ? { PublicName: name } : {
       PublicName: name,
       MaxPlayers: Number($('zbnew-max').value),
@@ -623,6 +639,23 @@ async function loadWorldRules() {
   if (!r || state.selectedId !== s.id) return;
   state.rules = r;
   renderWorldRules();
+  const presets = (await attempt(() => api.zomboidPresets())) || [];
+  fill($('zb-rules-preset'), presets.map((p) => el('option', { value: p.id }, p.name)));
+}
+
+async function applyWorldPreset() {
+  const s = current();
+  const id = $('zb-rules-preset').value;
+  if (!id) return;
+  const name = $('zb-rules-preset').selectedOptions[0].textContent;
+  if (!(await confirmDialog(`Set every world rule to the "${name}" preset? Rules from mods stay as they are.`, { title: 'Apply preset', confirmText: 'Apply', danger: false }))) return;
+  const r = await attempt(() => api.applyZomboidPreset(s.id, id));
+  if (r) {
+    state.rules = r;
+    state.ruleEdits = {};
+    renderWorldRules();
+    $('zb-rules-saved').textContent = `Applied "${name}". It applies on the next start.`;
+  }
 }
 
 function ruleControl(f, edits = state.ruleEdits, status = $('zb-rules-saved')) {
@@ -823,6 +856,7 @@ async function openServer(id) {
 
 function renderServer(s) {
   document.documentElement.dataset.game = s.game || 'minecraft';
+  document.querySelector('.tab[data-tab="world"]').textContent = s.game === 'zomboid' ? 'Map' : 'World';
   if (s.startup) state.startup[s.id] = s.startup;
   else if (s.status !== 'starting') delete state.startup[s.id];
   $('srv-name').textContent = s.name;
@@ -1308,6 +1342,16 @@ async function playerDo(player, action, args) {
   }
 }
 
+/** Spawnable vehicles for the open server, loaded once per server. */
+async function zomboidVehicles() {
+  const id = state.selectedId;
+  state.vehicleLists = state.vehicleLists || {};
+  if (!state.vehicleLists[id]) state.vehicleLists[id] = api.zomboidVehicles(id).catch(() => []);
+  return state.vehicleLists[id];
+}
+
+const PERK_NAMES = { Lightfoot: 'Lightfooted', Sneak: 'Sneaking', Axe: 'Axe', Blunt: 'Long Blunt', SmallBlunt: 'Short Blunt', LongBlade: 'Long Blade', SmallBlade: 'Short Blade', Woodwork: 'Carpentry', Doctor: 'First Aid', Electricity: 'Electrical', MetalWelding: 'Welding', PlantScavenging: 'Foraging', FlintKnapping: 'Knapping', Husbandry: 'Animal Care', Blacksmith: 'Blacksmithing' };
+
 /** Zomboid items for the open server, loaded once per server. */
 async function zomboidItems() {
   const id = state.selectedId;
@@ -1343,7 +1387,7 @@ function matchItems(items, query, limit = 40) {
 }
 
 /** A text box with a dropdown of matching items. The box ends up holding the item id. */
-function itemPicker(input) {
+function itemPicker(input, source = zomboidItems) {
   const list = el('ul', { class: 'suggest-list hidden' });
   const wrap = el('div', { class: 'suggest' }, input, list);
   let shown = [];
@@ -1370,7 +1414,7 @@ function itemPicker(input) {
   input.autocomplete = 'off';
   input.addEventListener('input', async () => {
     const q = input.value;
-    const items = await zomboidItems();
+    const items = await source();
     if (input.value !== q) return;
     shown = matchItems(items, q);
     active = shown.length ? 0 : -1;
@@ -1404,6 +1448,23 @@ function showZomboidPlayer(uuid) {
   const give = el('button', { class: 'btn', type: 'button' }, 'Give');
   give.disabled = !online;
   zomboidItems();
+  zomboidVehicles();
+  // Skills
+  const perk = el('select', {});
+  attempt(() => api.zomboidPerks()).then((perks) => fill(perk, (perks || []).map((k) => el('option', { value: k }, PERK_NAMES[k] || k.replace(/([a-z])([A-Z])/g, '$1 $2')))));
+  const xp = el('input', { type: 'number', min: 1, max: 100000, value: 150 });
+  const addXp = el('button', { class: 'btn', type: 'button', disabled: !online, onclick: () => playerDo(p, 'xp', { perk: perk.value, amount: Number(xp.value) }) }, 'Add XP');
+  // Vehicle
+  const vehicleInput = el('input', { type: 'text', placeholder: 'Type a vehicle, e.g. pickup or ambulance' });
+  const spawn = el('button', { class: 'btn', type: 'button', disabled: !online, onclick: () => playerDo(p, 'vehicle', { vehicle: vehicleInput.value }) }, 'Spawn');
+  const where = el('div', { class: 'muted small' }, 'Looking up where they are…');
+  attempt(() => api.zomboidPositions(s.id)).then((list) => {
+    const pos = (list || []).find((x) => x.username.toLowerCase() === p.name.toLowerCase());
+    fill(where, pos
+      ? [`${pos.character ? `Plays ${pos.character}. ` : ''}${pos.dead ? 'Their character is dead. ' : ''}Last saved at ${pos.x}, ${pos.y}${pos.z ? `, floor ${pos.z}` : ''}. `,
+        el('a', { href: '#', onclick: (e) => { e.preventDefault(); switchTab('world'); setTimeout(() => ZbMap.center(pos.x, pos.y, 1), 300); } }, 'Show on map')]
+      : 'No saved position yet. It appears after they have played.');
+  });
   give.onclick = () => playerDo(p, 'give', { item: itemInput.value, count: Number(countInput.value) });
   fill($('player-detail'),
     el('div', { class: 'player-head', oncontextmenu: (e) => openPlayerMenu(e, p) },
@@ -1412,8 +1473,18 @@ function showZomboidPlayer(uuid) {
         el('h2', {}, p.name),
         el('div', { class: 'meta' }, online ? 'Online now' : p.lastPlayed ? `Offline · last seen ${new Date(p.lastPlayed).toLocaleString()}` : 'Has not joined yet'),
         el('div', { class: 'meta' }, `Role: ${p.role || (p.op ? 'admin' : 'player')}${p.banned ? ' · banned' : ''}`))),
-    el('div', { class: 'player-actions' }, itemPicker(itemInput), countInput, give, online ? null : el('span', { class: 'muted small' }, 'Giving items needs the player online.')),
-    el('p', { class: 'muted small' }, 'Right-click the player for admin, teleport, god mode, kick and ban. Zomboid does not let other programs read a player\'s health or inventory, so those are not shown.'));
+    where,
+    el('div', { class: 'zb-player-grid' },
+      el('div', { class: 'card' }, el('h4', {}, 'Give an item'), el('div', { class: 'row' }, itemPicker(itemInput), countInput, give)),
+      el('div', { class: 'card' }, el('h4', {}, 'Skills'), el('div', { class: 'row' }, perk, xp, addXp), el('div', { class: 'muted small' }, 'About 75 XP is one level at the start; higher levels need much more.')),
+      el('div', { class: 'card' }, el('h4', {}, 'Spawn a vehicle next to them'), el('div', { class: 'row' }, itemPicker(vehicleInput, zomboidVehicles), spawn)),
+      el('div', { class: 'card' }, el('h4', {}, 'Powers'), el('div', { class: 'row' },
+        el('button', { class: 'btn', type: 'button', disabled: !online, onclick: () => playerDo(p, 'godmode', { on: true }) }, 'God mode'),
+        el('button', { class: 'btn', type: 'button', disabled: !online, onclick: () => playerDo(p, 'invisible', { on: true }) }, 'Invisible'),
+        el('button', { class: 'btn', type: 'button', disabled: !online, onclick: () => playerDo(p, 'noclip', { on: true }) }, 'Walk through walls'),
+        el('button', { class: 'btn btn-ghost', type: 'button', disabled: !online, onclick: async () => { for (const a of ['godmode', 'invisible', 'noclip']) await playerDo(p, a, { on: false }); } }, 'Turn all off')))),
+    online ? null : el('p', { class: 'muted small' }, 'These need the player online.'),
+    el('p', { class: 'muted small' }, 'Right-click the player for admin, teleport, kick and ban. Zomboid does not let other programs read a player\'s health or inventory, so those are not shown.'));
 }
 
 async function showPlayer(uuid, { quiet = false } = {}) {
@@ -1536,6 +1607,11 @@ function openZomboidPlayerMenu(event, player) {
   item('God mode off', 'godmode', { on: false }, { disabled: !online });
   item('Invisible to zombies', 'invisible', { on: true }, { disabled: !online });
   item('Visible to zombies', 'invisible', { on: false }, { disabled: !online });
+  item('Walk through walls on', 'noclip', { on: true }, { disabled: !online });
+  item('Walk through walls off', 'noclip', { on: false }, { disabled: !online });
+  label('Events');
+  item('Send a horde of 10 at them', 'horde', { count: 10 }, { disabled: !online, confirm: `Spawn 10 zombies around ${player.name}?` });
+  item('Lightning strike near them', 'lightning', {}, { disabled: !online });
   label('Moderation');
   item('Kick', 'kick', {}, { disabled: !online, danger: true, confirm: `Kick ${player.name}?` });
   if (player.banned) item('Unban', 'pardon', {}, { disabled: !running });
@@ -1634,7 +1710,197 @@ const RADII = [
   [5000, 'Huge (5,000 blocks)'],
 ];
 
+// ---------- Project Zomboid: map ----------
+
+/** Pan/zoom map drawn from the server's own map tiles, with players on top. */
+const ZbMap = {
+  info: null,
+  tiles: new Map(), // "level/x/y" -> Image | null (empty) | 'loading'
+  players: [],
+  scale: 0.05, // screen pixels per world square
+  cx: 10800, // world point in the middle of the view (Muldraugh)
+  cy: 9600,
+  timer: null,
+  wired: false,
+
+  async open() {
+    if (!this.info) this.info = await attempt(() => api.zomboidMapInfo());
+    if (!this.info) {
+      fill($('zbmap-players'), el('li', { class: 'muted' }, 'The map files were not found in the server install.'));
+      return;
+    }
+    this.wire();
+    this.refresh();
+    clearInterval(this.timer);
+    this.timer = setInterval(() => { if (!document.hidden) this.refresh(); }, 10000);
+    requestAnimationFrame(() => this.draw());
+  },
+
+  close() {
+    clearInterval(this.timer);
+    this.timer = null;
+  },
+
+  async refresh() {
+    const id = state.selectedId;
+    const list = await attempt(() => api.zomboidPositions(id));
+    if (!list || id !== state.selectedId) return;
+    this.players = list;
+    this.renderList();
+    this.draw();
+  },
+
+  center(x, y, scale) {
+    this.cx = x;
+    this.cy = y;
+    if (scale) this.scale = scale;
+    this.draw();
+  },
+
+  fit() {
+    const wrap = $('zbmap-wrap');
+    const i = this.info;
+    this.cx = (i.minX + i.maxX) / 2;
+    this.cy = (i.minY + i.maxY) / 2;
+    this.scale = Math.min(wrap.clientWidth / (i.maxX - i.minX), wrap.clientHeight / (i.maxY - i.minY));
+    this.draw();
+  },
+
+  renderList() {
+    const s = current();
+    fill($('zbmap-players'),
+      this.players.length ? null : el('li', { class: 'muted' }, 'Nobody has played on this server yet.'),
+      this.players.map((p) => el('li', {},
+        el('span', { class: `dot ${p.dead ? 'error' : p.online ? 'online' : ''}` }),
+        el('div', { class: 'grow' },
+          el('div', {}, el('strong', {}, p.username), p.character ? ` · ${p.character}` : ''),
+          el('div', { class: 'sub' }, `${p.dead ? 'Dead · ' : p.online ? 'Online · ' : ''}${p.x}, ${p.y}${p.z ? ` · floor ${p.z}` : ''}`)),
+        el('button', { class: 'btn btn-ghost', type: 'button', onclick: () => this.center(p.x, p.y, Math.max(this.scale, 1)) }, 'Show'),
+        el('a', { class: 'btn btn-ghost', href: `https://pzmap.org/en/B42/?goto=${p.x},${p.y}`, target: '_blank', rel: 'noreferrer', title: 'Open the detailed online map at this spot' }, 'Web map'))));
+    if (s && s.status !== 'running' && this.players.length) $('zbmap-players').prepend(el('li', { class: 'muted small note' }, 'The server is stopped; these are the last saved spots.'));
+  },
+
+  tile(level, tx, ty) {
+    const key = `${level}/${tx}/${ty}`;
+    if (this.tiles.has(key)) return this.tiles.get(key);
+    this.tiles.set(key, 'loading');
+    api.zomboidMapTile(level, tx, ty).then((url) => {
+      if (!url) return this.tiles.set(key, null);
+      const img = new Image();
+      img.onload = () => { this.tiles.set(key, img); this.draw(); };
+      img.src = url;
+    }).catch(() => this.tiles.set(key, null));
+    return 'loading';
+  },
+
+  draw() {
+    const canvas = $('zbmap');
+    const wrap = $('zbmap-wrap');
+    if (!this.info || !wrap.clientWidth) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#2d3a24';
+    ctx.fillRect(0, 0, w, h);
+    ctx.imageSmoothingEnabled = this.scale < 1;
+    const i = this.info;
+    // Pick the level whose tiles are drawn at about their own size.
+    const level = Math.max(0, Math.min(i.maxLevel, Math.round(Math.log2(1 / (this.scale)))));
+    const span = i.tileSquares * 2 ** level; // world squares per tile
+    const toX = (wx) => (wx - this.cx) * this.scale + w / 2;
+    const toY = (wy) => (wy - this.cy) * this.scale + h / 2;
+    const x0 = Math.max(0, Math.floor((this.cx - w / 2 / this.scale) / span));
+    const y0 = Math.max(0, Math.floor((this.cy - h / 2 / this.scale) / span));
+    const x1 = Math.min(Math.ceil(i.maxX / span) - 1, Math.floor((this.cx + w / 2 / this.scale) / span));
+    const y1 = Math.min(Math.ceil(i.maxY / span) - 1, Math.floor((this.cy + h / 2 / this.scale) / span));
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        const img = this.tile(level, tx, ty);
+        const sx = toX(tx * span);
+        const sy = toY(ty * span);
+        const size = span * this.scale;
+        if (img && img !== 'loading') ctx.drawImage(img, sx, sy, size + 0.5, size + 0.5);
+        else if (img === 'loading') {
+          // Show a coarser tile while this one loads.
+          const up = level + 1 <= i.maxLevel ? this.tiles.get(`${level + 1}/${tx >> 1}/${ty >> 1}`) : null;
+          if (up && up !== 'loading') ctx.drawImage(up, (tx & 1) * 128, (ty & 1) * 128, 128, 128, sx, sy, size + 0.5, size + 0.5);
+        }
+      }
+    }
+    const names = $('zbmap-names').checked;
+    ctx.font = '600 12px system-ui, sans-serif';
+    for (const p of this.players) {
+      const px = toX(p.x);
+      const py = toY(p.y);
+      if (px < -50 || py < -50 || px > w + 50 || py > h + 50) continue;
+      ctx.beginPath();
+      ctx.arc(px, py, 6, 0, Math.PI * 2);
+      ctx.fillStyle = p.dead ? '#e5534b' : p.online ? '#3fb950' : '#9aa4b2';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#000';
+      ctx.stroke();
+      if (names) {
+        const label = p.dead ? `${p.username} (dead)` : p.username;
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = 'rgba(0,0,0,.65)';
+        ctx.fillRect(px + 9, py - 9, tw + 8, 18);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, px + 13, py + 4);
+      }
+    }
+  },
+
+  wire() {
+    if (this.wired) return;
+    this.wired = true;
+    const wrap = $('zbmap-wrap');
+    let drag = null;
+    wrap.addEventListener('mousedown', (e) => {
+      drag = { x: e.clientX, y: e.clientY, cx: this.cx, cy: this.cy };
+      wrap.classList.add('dragging');
+    });
+    window.addEventListener('mouseup', () => {
+      drag = null;
+      wrap.classList.remove('dragging');
+    });
+    wrap.addEventListener('mousemove', (e) => {
+      const r = wrap.getBoundingClientRect();
+      const wx = Math.round(this.cx + (e.clientX - r.left - r.width / 2) / this.scale);
+      const wy = Math.round(this.cy + (e.clientY - r.top - r.height / 2) / this.scale);
+      $('zbmap-coords').textContent = `${wx}, ${wy}`;
+      if (!drag) return;
+      this.cx = drag.cx - (e.clientX - drag.x) / this.scale;
+      this.cy = drag.cy - (e.clientY - drag.y) / this.scale;
+      this.draw();
+    });
+    wrap.addEventListener('mouseleave', () => { $('zbmap-coords').textContent = ''; });
+    wrap.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = wrap.getBoundingClientRect();
+      const mx = e.clientX - r.left - r.width / 2;
+      const my = e.clientY - r.top - r.height / 2;
+      const before = { x: this.cx + mx / this.scale, y: this.cy + my / this.scale };
+      this.scale = Math.max(0.02, Math.min(4, this.scale * (e.deltaY < 0 ? 1.25 : 0.8)));
+      this.cx = before.x - mx / this.scale;
+      this.cy = before.y - my / this.scale;
+      this.draw();
+    }, { passive: false });
+    window.addEventListener('resize', () => { if (this.timer) this.draw(); });
+    $('zbmap-names').onchange = () => this.draw();
+    $('zbmap-refresh').onclick = () => this.refresh();
+    $('zbmap-fit').onclick = () => this.fit();
+  },
+};
+
 async function loadWorld() {
+  if (current() && current().game === 'zomboid') return ZbMap.open();
   const id = state.selectedId;
   if (typeof WorldMap !== 'undefined') WorldMap.open(id);
   state.pregen[id] = (await attempt(() => api.pregenStatus(id))) || {};
@@ -1959,7 +2225,10 @@ function switchTab(name) {
   if (name === 'tools') loadPerformance();
   if (name === 'settings') loadServerIcon();
   if (name === 'world') loadWorld();
-  else if (typeof WorldMap !== 'undefined') WorldMap.close();
+  else {
+    if (typeof WorldMap !== 'undefined') WorldMap.close();
+    ZbMap.close();
+  }
   clearInterval(state.playerTimer);
   if (name === 'players') {
     loadPlayers();
@@ -2253,7 +2522,34 @@ async function loadCohostUi() {
   }
 }
 
+function renderZomboidActions() {
+  const s = current();
+  if (!s || s.game !== 'zomboid') return;
+  const running = s.status === 'running';
+  const act = (label, action, opts = {}) => el('button', {
+    class: `btn${opts.ghost ? ' btn-ghost' : ''}`,
+    type: 'button',
+    disabled: !running,
+    onclick: async () => {
+      if (opts.confirm && !(await confirmDialog(opts.confirm, { title: label, confirmText: label, danger: false }))) return;
+      const r = await attempt(() => api.zomboidServerAction(s.id, action));
+      if (r !== undefined && r !== null) toast(opts.done || `${label}: done`);
+    },
+  }, label);
+  fill($('zb-action-buttons'),
+    act('Save the world now', 'save', { done: 'World saved' }),
+    act('Start rain', 'rain-start'),
+    act('Stop rain', 'rain-stop'),
+    act('Helicopter event', 'helicopter', { confirm: 'Start the helicopter event? It flies around and draws zombies to players.' }),
+    act('Gunshot sound', 'gunshot', { confirm: 'Play a loud gunshot somewhere on the map? It draws zombies.' }),
+    act('Check for mod updates', 'check-mods', { ghost: true, done: 'Asked the server to check. If a mod updated, it says so in Console.' }));
+  $('zb-msg').disabled = !running;
+}
+
 async function loadTools() {
+  renderZomboidActions();
+  const zb = current() && current().game === 'zomboid';
+  $('quick-command-text').placeholder = zb ? 'save' : 'save-all';
   const server = current();
   if (!server) return;
   await loadCohostUi();
@@ -2441,6 +2737,7 @@ async function loadZomboidSettings() {
   $('zb-map').value = v.Map || 'Muldraugh, KY';
   $('zb-pause').checked = v.PauseEmpty === 'true';
   $('zb-public').checked = v.Public === 'true';
+  $('zb-modrestart').checked = s.modUpdateRestart !== false;
   setupRamSlider($('zb-ram'), $('zb-ram-label'), s.memoryMb, $('zb-ram-hint'));
   const suggest = () => showRamSuggestion($('zb-ram-suggest'), $('zb-ram'), $('zb-ram-label'), v.modCount || 0, Number($('zb-max').value) || 16);
   const slide = $('zb-ram').oninput;
@@ -2465,6 +2762,7 @@ async function saveZomboidSettings(event) {
       Map: $('zb-map').value,
     });
     await api.setMemory(s.id, Number($('zb-ram').value));
+    await api.update(s.id, { modUpdateRestart: $('zb-modrestart').checked });
     if ($('zb-name').value.trim()) await api.update(s.id, { name: $('zb-name').value.trim() });
     return true;
   });
@@ -2919,7 +3217,17 @@ function wire() {
   $('zb-rules-search').oninput = renderWorldRules;
   $('zb-rules-save').onclick = saveWorldRules;
   $('zb-rules-reset').onclick = loadWorldRules;
+  $('zb-rules-preset-apply').onclick = applyWorldPreset;
   $('zb-options-search').oninput = renderServerOptions;
+  $('zb-msg-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const text = $('zb-msg').value.trim();
+    if (!text) return;
+    if (await attempt(() => api.zomboidServerAction(state.selectedId, 'message', { text }))) {
+      $('zb-msg').value = '';
+      toast('Message sent');
+    }
+  };
   $('zb-options-save').onclick = saveServerOptions;
   $('zb-options-reset').onclick = loadServerOptions;
   $('mods-search').oninput = renderMods;

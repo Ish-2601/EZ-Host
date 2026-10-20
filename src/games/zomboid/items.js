@@ -84,4 +84,63 @@ function listItems(installDir, mods = []) {
   return [...all.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-module.exports = { listItems };
+/** Vehicle names from Translate/EN (IGUI_VehicleName<Script>). */
+function readVehicleNames(mediaDir, out) {
+  const dir = path.join(mediaDir, 'lua', 'shared', 'Translate', 'EN');
+  try {
+    const json = path.join(dir, 'IG_UI.json');
+    if (fs.existsSync(json)) {
+      const text = fs.readFileSync(json, 'utf8').replace(/^﻿/, '').replace(/,(\s*[}\]])/g, '$1');
+      for (const [k, v] of Object.entries(JSON.parse(text))) if (k.startsWith('IGUI_VehicleName') && typeof v === 'string') out.set(k.slice(16), v.trim());
+    }
+    const txt = path.join(dir, 'IG_UI_EN.txt');
+    if (fs.existsSync(txt)) {
+      for (const m of fs.readFileSync(txt, 'latin1').matchAll(/IGUI_VehicleName([A-Za-z0-9_]+)\s*=\s*"([^"]*)"/g)) out.set(m[1], m[2].trim());
+    }
+  } catch {
+    // unreadable: raw script names are used
+  }
+}
+
+function readVehicleScripts(mediaDir, out) {
+  const root = path.join(mediaDir, 'scripts');
+  if (!fs.existsSync(root)) return;
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith('.txt')) {
+        let text;
+        try {
+          text = fs.readFileSync(file, 'latin1');
+        } catch {
+          continue;
+        }
+        const module = (text.match(/^\s*module\s+([A-Za-z0-9_]+)/m) || [])[1];
+        if (!module) continue;
+        for (const m of text.matchAll(/^\s*vehicle\s+([A-Za-z0-9_]+)\s*\{/gm)) out.set(`${module}.${m[1]}`, m[1]);
+      }
+    }
+  };
+  walk(root);
+}
+
+/** Vehicles that can be spawned: [{ id: 'Base.PickUpTruck', name, mod }]. Burnt and wrecked ones are left out. */
+function listVehicles(installDir, mods = []) {
+  const out = new Map();
+  const add = (mediaDir, mod) => {
+    const names = new Map();
+    const scripts = new Map();
+    readVehicleNames(mediaDir, names);
+    readVehicleScripts(mediaDir, scripts);
+    for (const [id, script] of scripts) {
+      if (out.has(id) || /Burnt|Smashed|Wreck/i.test(script)) continue;
+      out.set(id, { id, name: names.get(script) || script.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' '), mod });
+    }
+  };
+  add(path.join(installDir, 'media'), null);
+  for (const mod of mods) for (const media of modMediaDirs(mod.dir)) add(media, mod.name);
+  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+module.exports = { listItems, listVehicles };
