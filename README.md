@@ -31,6 +31,9 @@ Early development. Working today:
 - Right-click a player: OP, teleport, game mode, heal, feed, kick, ban, kill; OPs get a crown
 - World map rendered from the save, terrain or biomes with structure markers, live player heads, auto-refresh; select chunks to keep them loaded
 
+
+**Project Zomboid** (Windows): installs the dedicated server with SteamCMD, copies one of your in-game server configs (mods and world settings) or starts fresh, Workshop mods with on/off and requirement/incompatibility checks, players with admin/teleport/god mode/kick/ban, whitelist accounts with generated passwords, server settings, and an online address through playit.gg (UDP; playit asks for a verified email).
+
 See [ROADMAP.md](ROADMAP.md) for what comes next.
 
 ## Fonts

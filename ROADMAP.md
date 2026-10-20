@@ -85,6 +85,10 @@ Status: all six are built (2026-10-19). Tested on a throwaway server: pregenerat
 
 Built: startup progress with stages and a stall warning; hung-start detection (Forge can hang after a failed start); client-only mods that crash the server are turned off automatically and the server retries; a Mods tab listing every mod with on/off switches and detected problems; tuned Java (G1 settings, shared class archive on Java 19+); memory, settings and performance-mod suggestions; tick-rate monitor for Forge, NeoForge and vanilla; custom server icon.
 
+## Phase 1.7: other games (2026-10-20)
+
+Project Zomboid is supported (see README). Not available for Zomboid yet: a world map (no usable map source for a server), pregeneration (Build 42 has a /worldgen command worth wiring up), health and inventory views (the server does not expose them over RCON), server icon (Zomboid has none). Next game: to be chosen.
+
 ## Phase 2: reliability
 
 | Feature | Why it matters |

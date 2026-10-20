@@ -57,6 +57,7 @@ const CHANNEL_PERMISSION = {
   'servers:exportStatusPage': 'server', 'system:copy': 'server', 'system:totalMemoryMb': 'server',
   'settings:notifications': 'settings', 'settings:setNotifications': 'settings',
   'minecraft:versions': 'server',
+  'zomboid:localConfigs': 'server', 'servers:createZomboid': 'settings', 'zomboid:settings': 'settings', 'zomboid:saveSettings': 'settings',
   'settings:app': 'server', 'settings:setApp': 'settings',
   'mods:overview': 'server', 'mods:setEnabled': 'settings',
   'perf:advice': 'server', 'perf:applySettings': 'settings', 'perf:installMods': 'settings', 'servers:setMemory': 'settings',
@@ -405,11 +406,15 @@ function registerIpc() {
   handle('servers:pregen', (id) => manager.pregenStatus(id));
   handle('players:list', (id) => manager.listPlayersWithNames(id));
   handle('whitelist:status', (id) => manager.whitelistStatus(id));
-  handle('whitelist:add', (id, name) => manager.whitelistAdd(id, name));
+  handle('whitelist:add', (id, name, password) => manager.whitelistAdd(id, name, password));
   handle('whitelist:remove', (id, name) => manager.whitelistRemove(id, name));
   handle('whitelist:enable', (id, on) => manager.setWhitelistEnabled(id, Boolean(on)));
   handle('whitelist:deny', (id, name) => manager.denyJoiner(id, name));
   handle('settings:hostName', () => manager.hostName());
+  handle('zomboid:localConfigs', () => manager.zomboid.localConfigs());
+  handle('servers:createZomboid', (opts) => manager.zomboid.create(opts || {}));
+  handle('zomboid:settings', (id) => manager.zomboid.settings(id));
+  handle('zomboid:saveSettings', (id, values) => manager.zomboid.saveSettings(id, values || {}));
   handle('settings:app', () => manager.appSettings());
   handle('settings:setApp', async (patch) => {
     const next = await manager.setAppSettings(patch || {});

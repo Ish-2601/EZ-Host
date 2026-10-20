@@ -59,6 +59,10 @@
           <span class="source-title">A .mrpack file</span>
           <span class="source-sub">A modpack file you downloaded.</span>
         </button>
+        <button class="source-tab" data-source="zomboid" role="tab">
+          <span class="source-title">Project Zomboid</span>
+          <span class="source-sub">A dedicated Zomboid server, with your Workshop mods.</span>
+        </button>
         <button class="source-tab" data-source="vanilla" role="tab">
           <span class="source-title">Plain Minecraft</span>
           <span class="source-sub">No mods. Friends join with the normal game.</span>
@@ -77,6 +81,11 @@
         </form>
         <div id="search-status" class="muted small"></div>
         <div id="search-results" class="pack-grid"></div>
+      </div>
+
+      <div id="source-zomboid" class="source-panel hidden">
+        <p class="muted">Copy one of the servers you host in Zomboid (same mods and world settings), or start fresh. The first Zomboid server downloads the dedicated server from Steam, about 7 GB.</p>
+        <div id="zb-configs" class="pack-grid"></div>
       </div>
 
       <div id="source-vanilla" class="source-panel hidden">
@@ -183,6 +192,15 @@
       </nav>
 
       <div id="tab-friends" class="tab-panel hidden">
+        <div class="card zb-only">
+          <h3>How friends join</h3>
+          <ol class="steps-list">
+            <li>They need the same version of Project Zomboid as the server (it updates itself each time you press Start).</li>
+            <li>In Zomboid they click <strong>Join</strong>, then <strong>Add server</strong>, and type the address from <strong>Share with friends</strong>: the part before the colon goes in IP, the number after it in Port.</li>
+            <li>If the whitelist is on, they use the username and password you made for them on the Players tab. Otherwise they pick any username.</li>
+            <li>Mods download by themselves when they join. Nothing to install by hand.</li>
+          </ol>
+        </div>
         <div class="card">
           <h3>What your friends' Minecraft needs</h3>
           <p class="muted">Their game must match the server exactly. Otherwise Minecraft says "Connection Lost" or "missing mods".</p>
@@ -422,6 +440,23 @@
       </div>
 
       <div id="tab-settings" class="tab-panel hidden">
+        <form id="zb-settings-form" class="card form zb-only">
+          <h3>Server settings</h3>
+          <label>Server name (shown to players) <input id="zb-name" type="text" maxlength="64" /></label>
+          <label>Description <textarea id="zb-desc" rows="3" maxlength="1000"></textarea></label>
+          <div class="grid-2">
+            <label>Max players <input id="zb-max" type="number" min="1" max="100" /></label>
+            <label>Server password (optional) <input id="zb-pass" type="text" maxlength="64" placeholder="No password" /></label>
+          </div>
+          <label>Memory: <strong id="zb-ram-label"></strong><input id="zb-ram" type="range" min="2048" step="512" /></label>
+          <div class="check-grid">
+            <label class="checkbox"><input id="zb-pvp" type="checkbox" /> Players can hurt each other (PvP)</label>
+            <label class="checkbox"><input id="zb-pause" type="checkbox" /> Pause the world when nobody is online</label>
+            <label class="checkbox"><input id="zb-public" type="checkbox" /> List in Zomboid's public server browser</label>
+          </div>
+          <p class="muted small">Zomboid has no server icon in its server list, so there is nothing to set for that. Changes apply on the next start.</p>
+          <div class="row"><button class="btn btn-primary" type="submit">Save</button><span id="zb-saved" class="muted small"></span></div>
+        </form>
         <div class="card icon-card">
           <h3>Server icon</h3>
           <div class="row">

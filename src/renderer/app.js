@@ -184,7 +184,7 @@ function renderServerList() {
         oncontextmenu: (e) => openMenu(e, s.id),
         title: 'Right-click for more options',
       },
-        icon(s.source && (s.source.iconUrl || (s.source.type === 'vanilla' ? 'icon.svg' : null))),
+        s.game === 'zomboid' ? el('div', { class: 'icon-fallback zb-head' }, '☣') : icon(s.source && (s.source.iconUrl || (s.source.type === 'vanilla' ? 'icon.svg' : null))),
         el('div', { class: 'grow' },
           el('div', { class: 'name' }, s.name),
           el('div', { class: 'sub' }, statusWord(s))
@@ -227,7 +227,8 @@ function openNewServer() {
 async function selectSource(source) {
   state.source = source;
   document.querySelectorAll('.source-tab').forEach((t) => t.classList.toggle('active', t.dataset.source === source));
-  for (const s of ['profiles', 'modrinth', 'file', 'vanilla']) $(`source-${s}`).classList.toggle('hidden', s !== source);
+  for (const s of ['profiles', 'modrinth', 'file', 'zomboid', 'vanilla']) $(`source-${s}`).classList.toggle('hidden', s !== source);
+  if (source === 'zomboid') loadZomboidConfigs();
   if (source === 'profiles') await loadProfiles();
   if (source === 'modrinth') {
     if (!$('search-results').children.length) search('');
@@ -365,13 +366,43 @@ async function chooseVanilla() {
   syncName();
 }
 
+// ---------- Project Zomboid: new server ----------
+
+async function loadZomboidConfigs() {
+  const configs = (await attempt(() => api.zomboidLocalConfigs())) || [];
+  const card = (title, sub, tags, onclick) => el('button', { class: 'pack-card', type: 'button', onclick },
+    el('div', { class: 'icon-fallback' }, '☣'),
+    el('div', {}, el('div', { class: 'launcher' }, 'Project Zomboid'), el('div', { class: 'title' }, title), el('div', { class: 'desc' }, sub),
+      el('div', { class: 'tags' }, tags.filter(Boolean).map((t) => el('span', { class: 'tag' }, t)))));
+  fill($('zb-configs'),
+    card('Start fresh', 'A new world with the default settings and no mods.', [], () => chooseZomboid(null)),
+    configs.map((c) => card(c.name, 'Copy of the server you host in Zomboid: same mods and world settings.', [
+      `${c.mods} ${c.mods === 1 ? 'mod' : 'mods'}`, c.map, c.maxPlayers ? `${c.maxPlayers} players` : null,
+    ], () => chooseZomboid(c.name))));
+}
+
+function chooseZomboid(copyFrom) {
+  state.pending = { kind: 'zomboid', copyFrom };
+  $('version-field').classList.add('hidden');
+  $('mc-version-field').classList.add('hidden');
+  openDetails({
+    title: copyFrom ? `Copy of ${copyFrom}` : 'Project Zomboid',
+    description: copyFrom
+      ? 'Uses the mods and world settings of your in-game server. The server downloads the Workshop mods the first time it starts.'
+      : 'A fresh Project Zomboid world.',
+    name: copyFrom || 'Zomboid server',
+    ram: Math.max(4096, Math.min(8192, Math.floor((state.totalMemoryMb * 0.4) / 512) * 512)),
+  });
+}
+
 async function createServer(event) {
   event.preventDefault();
   const p = state.pending;
   if (!p) return;
   const common = { name: $('server-name').value.trim(), memoryMb: Number($('server-ram').value) };
   const created = await attempt(() =>
-    p.kind === 'profile' ? api.createFromProfile({ ...common, profileId: p.profile.id })
+    p.kind === 'zomboid' ? api.createZomboid({ ...common, copyFrom: p.copyFrom || null })
+    : p.kind === 'profile' ? api.createFromProfile({ ...common, profileId: p.profile.id })
     : p.kind === 'vanilla' ? api.createVanilla({ ...common, minecraft: $('mc-version').value })
     : api.createFromModrinth({ ...common, projectId: p.hit.id, versionId: $('pack-version').value })
   );
@@ -414,17 +445,19 @@ async function openServer(id) {
 }
 
 function renderServer(s) {
+  document.documentElement.dataset.game = s.game || 'minecraft';
   if (s.startup) state.startup[s.id] = s.startup;
   else if (s.status !== 'starting') delete state.startup[s.id];
   $('srv-name').textContent = s.name;
   $('srv-icon').src = (s.source && s.source.iconUrl) || 'icon.svg';
   const parts = [];
-  if (s.loader === 'vanilla') parts.push('No mods');
+  if (s.game === 'zomboid') parts.push('Project Zomboid', s.packName && s.packName !== 'Project Zomboid' ? s.packName : null);
+  else if (s.loader === 'vanilla') parts.push('No mods');
   else if (s.packName) parts.push(`${s.packName} ${s.packVersion || ''}`.trim());
   if (s.minecraft) parts.push(`Minecraft ${s.minecraft}`);
   if (s.loader && s.loader !== 'vanilla') parts.push(loaderName(s.loader, s.loaderVersion));
   parts.push(`${formatMb(s.memoryMb)} memory`);
-  $('srv-meta').textContent = parts.join(' · ');
+  $('srv-meta').textContent = parts.filter(Boolean).join(' · ');
   renderStatus(s);
   $('share-card').classList.toggle('hidden', !s.installed);
   renderOnlineBox();
@@ -634,6 +667,14 @@ const headUrl = (uuid, size = 64) => `https://mc-heads.net/avatar/${uuid}/${size
 
 /** A player head with a crown for OPs and a red dot for banned players. */
 function headEl(idOrName, size, { op = false, banned = false } = {}) {
+  // Zomboid players have no Minecraft skin; show a plain badge instead.
+  if (String(idOrName).startsWith('zomboid:')) {
+    const wrap = el('span', { class: 'head-wrap', title: op ? 'Admin' : banned ? 'Banned' : null }, el('span', { class: 'icon-fallback zb-head' }, '☣'));
+    wrap.firstChild.style.width = wrap.firstChild.style.height = `${size}px`;
+    if (op) wrap.append(crownSvg());
+    if (banned) wrap.append(el('span', { class: 'ban' }));
+    return wrap;
+  }
   const wrap = el('span', { class: 'head-wrap', title: op ? 'Operator (OP)' : banned ? 'Banned' : null });
   wrap.append(el('img', { src: headUrl(idOrName, size), alt: '', width: size, height: size }));
   if (op) wrap.append(crownSvg());
@@ -668,7 +709,12 @@ function renderWhitelist(wl) {
   if (!s) return;
   $('wl-enabled').checked = wl.enabled;
   $('wl-switch-label').textContent = wl.enabled ? 'Whitelist on' : 'Whitelist off';
-  $('wl-help').textContent = wl.enabled
+  $('wl-name').placeholder = wl.needsPassword ? 'Zomboid username' : 'Minecraft username';
+  if (wl.needsPassword) {
+    $('wl-help').textContent = wl.enabled
+      ? 'Only players with an account on this server can join. Add a username and the app makes a password for them to use. The server must be running to add or remove players.'
+      : 'Anyone who has the server address can join and make their own account. Turn the whitelist on to choose who gets in.';
+  } else $('wl-help').textContent = wl.enabled
     ? 'Only the players below can join. Anyone else is turned away and shows up under "Trying to join".'
     : 'Anyone who has the server address can join. Turn the whitelist on to choose who gets in.';
   const remove = (name) => async () => {
@@ -677,7 +723,7 @@ function renderWhitelist(wl) {
   fill($('wl-list'),
     wl.players.length ? null : el('li', { class: 'muted' }, 'Nobody yet. Add your own username first.'),
     wl.players.map((p) => el('li', {},
-      el('img', { src: headUrl(p.uuid || p.name, 24), alt: '' }),
+      wl.needsPassword ? headEl(`zomboid:${p.name}`, 24) : el('img', { src: headUrl(p.uuid || p.name, 24), alt: '' }),
       p.name,
       el('button', { type: 'button', title: `Remove ${p.name}`, onclick: remove(p.name) }, '×')
     ))
@@ -702,6 +748,21 @@ function renderWhitelist(wl) {
 
 async function addToWhitelist(name) {
   const id = state.selectedId;
+  if ((current() && current().game === 'zomboid')) {
+    const result = await attempt(() => api.whitelistAdd(id, name));
+    if (!result) return false;
+    const box = el('div', { class: 'secret-box' },
+      el('span', {}, `Send ${result.name} this password:`), el('code', {}, result.password), copyButton(result.password));
+    let secret = document.getElementById('wl-secret');
+    if (!secret) {
+      secret = el('div', { id: 'wl-secret', class: 'wl-refused' });
+      $('wl-form').after(secret);
+    }
+    fill(secret, el('strong', {}, `${result.name} can now join`), box,
+      el('p', { class: 'muted small' }, 'They log in with this username and password. It is shown once, so copy it now.'));
+    loadWhitelist();
+    return true;
+  }
   if (await attempt(async () => (await api.whitelistAdd(id, name), true))) {
     toast(`${name} can now join`);
     loadWhitelist();
@@ -828,7 +889,31 @@ async function playerDo(player, action, args) {
   }
 }
 
+function showZomboidPlayer(uuid) {
+  state.playerUuid = uuid;
+  document.querySelectorAll('#player-list li').forEach((li, i) => li.classList.toggle('active', state.playerList[i] && state.playerList[i].uuid === uuid));
+  const p = state.playerList.find((x) => x.uuid === uuid);
+  if (!p) return;
+  const s = current();
+  const online = p.online && s && s.status === 'running';
+  const itemInput = el('input', { type: 'text', class: 'item', placeholder: 'Item id, e.g. Base.Axe' });
+  const countInput = el('input', { type: 'number', class: 'count', min: 1, max: 500, value: 1 });
+  const give = el('button', { class: 'btn', type: 'button' }, 'Give');
+  give.disabled = !online;
+  give.onclick = () => playerDo(p, 'give', { item: itemInput.value, count: Number(countInput.value) });
+  fill($('player-detail'),
+    el('div', { class: 'player-head', oncontextmenu: (e) => openPlayerMenu(e, p) },
+      el('div', { class: 'icon-fallback pack-icon-md' }, '☣'),
+      el('div', {},
+        el('h2', {}, p.name),
+        el('div', { class: 'meta' }, online ? 'Online now' : p.lastPlayed ? `Offline · last seen ${new Date(p.lastPlayed).toLocaleString()}` : 'Has not joined yet'),
+        el('div', { class: 'meta' }, `Role: ${p.role || (p.op ? 'admin' : 'player')}${p.banned ? ' · banned' : ''}`))),
+    el('div', { class: 'player-actions' }, itemInput, countInput, give, online ? null : el('span', { class: 'muted small' }, 'Giving items needs the player online.')),
+    el('p', { class: 'muted small' }, 'Right-click the player for admin, teleport, god mode, kick and ban. Zomboid does not let other programs read a player\'s health or inventory, so those are not shown.'));
+}
+
 async function showPlayer(uuid, { quiet = false } = {}) {
+  if ((current() && current().game === 'zomboid')) return showZomboidPlayer(uuid);
   state.playerUuid = uuid;
   document.querySelectorAll('#player-list li').forEach((li, i) => li.classList.toggle('active', state.playerList[i] && state.playerList[i].uuid === uuid));
   const id = state.selectedId;
@@ -913,7 +998,54 @@ async function showPlayer(uuid, { quiet = false } = {}) {
 
 // ---------- player right-click menu ----------
 
+function openZomboidPlayerMenu(event, player) {
+  event.preventDefault();
+  closeMenu();
+  const s = current();
+  const online = s && s.status === 'running' && player.online;
+  const running = s && s.status === 'running';
+  const others = state.playerList.filter((x) => x.online && x.name !== player.name);
+  const items = [];
+  const label = (t) => items.push(el('div', { class: 'menu-label' }, t));
+  const item = (text, action, args = {}, opts = {}) => {
+    const b = el('button', { role: 'menuitem', class: opts.danger ? 'danger' : '' }, text);
+    if (opts.disabled) b.disabled = true;
+    b.onclick = async () => {
+      closePlayerMenu();
+      if (opts.confirm && !confirm(opts.confirm)) return;
+      if (opts.run) return opts.run();
+      await playerDo(player, action, args);
+      loadPlayers();
+    };
+    items.push(b);
+  };
+  label(`${player.name} · ${online ? 'online' : 'offline'}`);
+  item(player.op ? 'Remove admin' : 'Make admin', player.op ? 'deop' : 'op', {}, { disabled: !running, confirm: player.op ? null : `Make ${player.name} an admin? Admins can use every command.` });
+  item('Make moderator', 'role', { level: 'moderator' }, { disabled: !running });
+  if (player.whitelisted) item('Remove from whitelist', null, {}, { disabled: !running, danger: true, run: async () => { await attempt(() => api.whitelistRemove(s.id, player.name)); loadPlayers(); } });
+  label('Teleport');
+  for (const other of others.slice(0, 6)) item(`Send to ${other.name}`, 'tp-to', { target: other.name }, { disabled: !online });
+  for (const other of others.slice(0, 6)) item(`Bring ${other.name} here`, 'tp-from', { target: other.name }, { disabled: !online });
+  if (!others.length) items.push(el('div', { class: 'menu-label' }, 'Nobody else online'));
+  label('Powers');
+  item('God mode on', 'godmode', { on: true }, { disabled: !online });
+  item('God mode off', 'godmode', { on: false }, { disabled: !online });
+  item('Invisible to zombies', 'invisible', { on: true }, { disabled: !online });
+  item('Visible to zombies', 'invisible', { on: false }, { disabled: !online });
+  label('Moderation');
+  item('Kick', 'kick', {}, { disabled: !online, danger: true, confirm: `Kick ${player.name}?` });
+  if (player.banned) item('Unban', 'pardon', {}, { disabled: !running });
+  else item('Ban', 'ban', {}, { disabled: !running, danger: true, confirm: `Ban ${player.name}?` });
+  const menu = $('player-menu');
+  fill(menu, items);
+  menu.classList.remove('hidden');
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8))}px`;
+}
+
 async function openPlayerMenu(event, player) {
+  if ((current() && current().game === 'zomboid')) return openZomboidPlayerMenu(event, player);
   event.preventDefault();
   closeMenu();
   const s = current();
@@ -1384,7 +1516,48 @@ function modRow(m, running) {
   );
 }
 
+function renderZomboidMods() {
+  const data = state.mods;
+  const running = data.running;
+  $('mods-running-note').classList.toggle('hidden', !running);
+  $('mods-count').textContent = `${data.enabledCount} on · ${data.workshopCount} Workshop items in the download list`;
+  const toggle = (mod) => {
+    const sw = el('label', { class: 'switch' }, el('input', { type: 'checkbox' }), el('span', { class: 'switch-track' }));
+    const box = sw.querySelector('input');
+    box.checked = mod.enabled;
+    box.disabled = running;
+    box.onchange = async () => {
+      const r = await attempt(() => api.setModEnabled(state.selectedId, mod.id, box.checked));
+      if (r && r.added && r.added.length) toast(`Also turned on what it needs: ${r.added.join(', ')}`);
+      loadMods();
+    };
+    return sw;
+  };
+  const modRowZ = (mod) => el('li', { class: `mod-row${mod.enabled ? '' : ' off'}` }, toggle(mod),
+    el('div', { class: 'mod-main' },
+      el('div', {}, el('span', { class: 'mod-name' }, mod.name), mod.problems.length ? el('span', { class: 'badge warn' }, 'Problem') : null),
+      el('div', { class: 'mod-meta' }, mod.id),
+      mod.problems.map((t) => el('div', { class: 'mod-reason' }, t))));
+  const problemMods = data.items.flatMap((i) => i.mods).filter((m) => m.problems.length);
+  $('mods-problems').classList.toggle('hidden', !problemMods.length && !data.unknown.length);
+  fill($('mods-problem-list'),
+    problemMods.map(modRowZ),
+    data.unknown.length ? el('li', { class: 'muted small' }, `${data.unknown.length} mod(s) are on but not in your own Steam Workshop downloads (${data.unknown.slice(0, 6).join(', ')}${data.unknown.length > 6 ? '…' : ''}). The server can still download them; the app just cannot check their requirements.`) : null);
+  const q = $('mods-search').value.trim().toLowerCase();
+  const filter = $('mods-filter').value;
+  const items = data.items
+    .map((i) => ({ ...i, mods: i.mods.filter((m) => (!q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q) || i.title.toLowerCase().includes(q)) && (filter === 'all' || filter === 'client' || (filter === 'on' && m.enabled) || (filter === 'off' && !m.enabled))) }))
+    .filter((i) => i.mods.length)
+    .sort((a, b) => b.mods.some((m) => m.enabled) - a.mods.some((m) => m.enabled) || a.title.localeCompare(b.title));
+  fill($('mods-list'),
+    data.items.length ? null : el('li', { class: 'muted' }, 'No Project Zomboid Workshop mods found in your Steam downloads. Subscribe to mods in the Steam Workshop and they appear here.'),
+    items.slice(0, 300).map((i) => el('li', { class: 'zb-item' },
+      el('div', { class: 'zb-item-title' }, i.title, el('span', { class: 'badge' }, `Workshop ${i.workshopId}`)),
+      el('ul', { class: 'mod-list' }, i.mods.map(modRowZ)))));
+}
+
 function renderMods() {
+  if (state.mods && state.mods.game === 'zomboid') return renderZomboidMods();
   const data = state.mods;
   if (!data) return;
   const running = data.running;
@@ -1662,6 +1835,7 @@ async function searchPlugins() {
 }
 
 async function loadFriends() {
+  if ((current() && current().game === 'zomboid')) return;
   const id = state.selectedId;
   const s = current();
   if (!s) return;
@@ -1747,7 +1921,46 @@ function appendConsole(line) {
   if (atBottom) c.scrollTop = c.scrollHeight;
 }
 
+async function loadZomboidSettings() {
+  const s = current();
+  const v = await attempt(() => api.zomboidSettings(s.id));
+  if (!v) return;
+  $('zb-name').value = v.PublicName;
+  $('zb-desc').value = v.PublicDescription;
+  $('zb-max').value = v.MaxPlayers;
+  $('zb-pass').value = v.Password;
+  $('zb-pvp').checked = v.PVP === 'true';
+  $('zb-pause').checked = v.PauseEmpty === 'true';
+  $('zb-public').checked = v.Public === 'true';
+  setupRamSlider($('zb-ram'), $('zb-ram-label'), s.memoryMb);
+  $('zb-saved').textContent = '';
+}
+
+async function saveZomboidSettings(event) {
+  event.preventDefault();
+  const s = current();
+  const ok = await attempt(async () => {
+    await api.saveZomboidSettings(s.id, {
+      PublicName: $('zb-name').value,
+      PublicDescription: $('zb-desc').value,
+      MaxPlayers: Number($('zb-max').value),
+      Password: $('zb-pass').value,
+      PVP: $('zb-pvp').checked,
+      PauseEmpty: $('zb-pause').checked,
+      Public: $('zb-public').checked,
+    });
+    await api.setMemory(s.id, Number($('zb-ram').value));
+    if ($('zb-name').value.trim()) await api.update(s.id, { name: $('zb-name').value.trim() });
+    return true;
+  });
+  if (ok) {
+    $('zb-saved').textContent = 'Saved. Changes apply on the next start.';
+    refreshServers();
+  }
+}
+
 async function loadSettings() {
+  if ((current() && current().game === 'zomboid')) return loadZomboidSettings();
   const s = current();
   if (!s) return;
   $('set-name').value = s.name;
@@ -1804,6 +2017,10 @@ async function saveSettings(event) {
 async function startServer() {
   const s = current();
   if (!s) return;
+  if (s.game === 'zomboid') {
+    await attempt(() => api.start(s.id));
+    return;
+  }
   // Ask once for the host's username so they are put on each server's whitelist.
   const host = await attempt(() => api.hostName());
   if (host && !host.saved) {
@@ -2148,6 +2365,7 @@ function wire() {
       if (!$('tab-world').classList.contains('hidden')) loadWorld();
     }
   });
+  $('zb-settings-form').onsubmit = saveZomboidSettings;
   $('mods-search').oninput = renderMods;
   $('mods-filter').onchange = renderMods;
   $('perf-refresh').onclick = loadPerformance;

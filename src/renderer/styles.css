@@ -398,3 +398,21 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .tour-box { position: fixed; width: min(380px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--accent); padding: 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 16px 40px rgba(0,0,0,.5); }
 .tour-box p { color: var(--text); line-height: 1.55; }
 .tour-count { font-size: 12px; color: var(--muted); }
+
+/* ---------- Per-game parts ---------- */
+html:not([data-game="zomboid"]) .zb-only { display: none !important; }
+html[data-game="zomboid"] #tab-friends > :not(.zb-only),
+html[data-game="zomboid"] #settings-form,
+html[data-game="zomboid"] .icon-card,
+html[data-game="zomboid"] #perf-card,
+html[data-game="zomboid"] .tab[data-tab="world"] { display: none !important; }
+textarea { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; resize: vertical; }
+.zb-item { padding: 8px 10px; border-radius: 8px; }
+.zb-item-title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.zb-item .mod-row { padding-left: 24px; }
+.secret-box { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--accent); }
+.secret-box code { flex: 1; font-size: 16px; }
+.zb-head { display: grid; place-items: center; font-size: 14px; }
+#wl-secret { margin-top: 4px; }
+#mods-list { overflow-x: hidden; }
+#zb-settings-form label.checkbox { flex-direction: row; align-items: center; text-align: left; }
