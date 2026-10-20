@@ -54,7 +54,7 @@ const CHANNEL_PERMISSION = {
   'servers:activity': 'server', 'servers:metrics': 'server', 'servers:commands': 'tools', 'servers:setCommands': 'tools',
   'servers:setDiskWarning': 'settings',
   'servers:changeSoftware': 'settings', 'plugins:search': 'tools', 'plugins:install': 'tools', 'modrinth:compareUpdate': 'settings',
-  'modrinth:update': 'settings', 'servers:installBedrock': 'tools', 'share:export': 'server', 'settings:hostName': 'server', 'settings:setHostName': 'settings',
+  'modrinth:update': 'settings', 'servers:installBedrock': 'tools', 'share:export': 'server', 'settings:hostName': 'server', 'items:art': 'players', 'settings:setHostName': 'settings',
   'servers:exportStatusPage': 'server', 'system:copy': 'server', 'system:totalMemoryMb': 'server',
   'settings:notifications': 'settings', 'settings:setNotifications': 'settings',
   'minecraft:versions': 'server',
@@ -414,6 +414,7 @@ function registerIpc() {
   handle('whitelist:enable', (id, on) => manager.setWhitelistEnabled(id, Boolean(on)));
   handle('whitelist:deny', (id, name) => manager.denyJoiner(id, name));
   handle('settings:hostName', () => manager.hostName());
+  handle('items:art', (version, id, serverId) => require('../engine/item-art').itemArt(version, id, manager.paths.cache, serverId ? path.join(manager.serverDir(serverId), 'mods') : null));
   handle('zomboid:localConfigs', () => manager.zomboid.localConfigs());
   handle('servers:createZomboid', (opts) => manager.zomboid.create(opts || {}));
   handle('servers:retryZomboidSetup', (id) => manager.zomboid.retrySetup(id));

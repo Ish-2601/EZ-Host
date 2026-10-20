@@ -1376,28 +1376,177 @@ function itemLabel(item) {
   return ns === 'minecraft' ? words : `${words}`;
 }
 
+// ---------- item pictures (drawn from the game's own model files) ----------
+
+const ItemArt = {
+  specs: new Map(), // "version|id" -> Promise<spec|null>
+  images: new Map(), // data URL -> Promise<HTMLImageElement>
+
+  spec(version, id) {
+    const server = state.selectedId;
+    const key = `${server}|${version}|${id}`;
+    if (!this.specs.has(key)) {
+      const p = api.itemArt(version, id, server).catch(() => null);
+      this.specs.set(key, p);
+      // A missing client jar (offline) is not remembered, so the next view tries again.
+      p.then((s) => { if (!s) setTimeout(() => this.specs.delete(key), 30000); });
+    }
+    return this.specs.get(key);
+  },
+
+  image(url) {
+    if (!this.images.has(url)) {
+      this.images.set(url, new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = url;
+      }));
+    }
+    return this.images.get(url);
+  },
+
+  /** Draw an item into a canvas the way the in-game inventory does. Resolves false if there is no picture. */
+  async draw(canvas, version, id, { glint = false } = {}) {
+    const spec = await this.spec(version, id);
+    if (!spec) return false;
+    const size = 64;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    if (spec.type === 'flat') {
+      const leather = /(^|:)leather_(helmet|chestplate|leggings|boots)$/.test(id);
+      for (const [i, url] of spec.layers.entries()) {
+        const img = await this.image(url);
+        if (!img) continue;
+        if (leather && i === 0) {
+          // Undyed leather armour is brown in game; the texture itself is grey.
+          const off = document.createElement('canvas');
+          off.width = off.height = size;
+          const o = off.getContext('2d');
+          o.imageSmoothingEnabled = false;
+          o.drawImage(img, 0, 0, img.naturalWidth, img.naturalWidth, 0, 0, size, size);
+          o.globalCompositeOperation = 'multiply';
+          o.fillStyle = '#a06540';
+          o.fillRect(0, 0, size, size);
+          o.globalCompositeOperation = 'destination-in';
+          o.drawImage(img, 0, 0, img.naturalWidth, img.naturalWidth, 0, 0, size, size);
+          ctx.drawImage(off, 0, 0);
+        } else ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalWidth, 0, 0, size, size);
+      }
+    } else {
+      await this.drawBoxes(ctx, spec, size);
+    }
+    if (glint) {
+      // The enchantment shimmer: a purple wash over the item's own pixels only.
+      ctx.globalCompositeOperation = 'source-atop';
+      const g = ctx.createLinearGradient(0, 0, size, size);
+      g.addColorStop(0, 'rgba(140, 80, 255, 0.55)');
+      g.addColorStop(0.5, 'rgba(210, 150, 255, 0.35)');
+      g.addColorStop(1, 'rgba(120, 60, 230, 0.55)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, size, size);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    return true;
+  },
+
+  /**
+   * Blocks: draw each box of the model from the inventory angle (looking down at
+   * 30 degrees with the block turned 135 degrees), showing the top, north and west faces.
+   */
+  async drawBoxes(ctx, spec, size) {
+    const imgs = {};
+    for (const [name, url] of Object.entries(spec.textures)) imgs[name] = await this.image(url);
+    const k = (size - 6) / 22.63; // one model unit in pixels: a full block fills the icon
+    const c = Math.SQRT1_2;
+    const project = (x, y, z) => {
+      x -= 8; y -= 8; z -= 8;
+      return [size / 2 + (-c * x + c * z) * k, size / 2 + (-0.866 * y + 0.5 * (-c * x - c * z)) * k + 1];
+    };
+    const depth = (b) => -c * (b.from[0] + b.to[0]) / 2 - c * (b.from[2] + b.to[2]) / 2;
+    const tinted = (img, name, color) => {
+      const off = document.createElement('canvas');
+      off.width = img.naturalWidth;
+      off.height = Math.min(img.naturalHeight, img.naturalWidth);
+      const o = off.getContext('2d');
+      o.drawImage(img, 0, 0);
+      o.globalCompositeOperation = 'multiply';
+      o.fillStyle = color;
+      o.fillRect(0, 0, off.width, off.height);
+      o.globalCompositeOperation = 'destination-in';
+      o.drawImage(img, 0, 0);
+      return off;
+    };
+    const tintFor = (name) => (/leaves|vine|azalea|mangrove/.test(name) ? '#6aa84f' : /grass|fern|sugar_cane|lily/.test(name) ? '#8fbf57' : /water/.test(name) ? '#3f76e4' : '#ffffff');
+    const shade = { up: 0, north: 0.2, west: 0.4 };
+
+    for (const b of [...spec.boxes].sort((a, z) => depth(a) - depth(z) || a.from[1] - z.from[1])) {
+      const [x1, y1, z1] = b.from;
+      const [x2, y2, z2] = b.to;
+      // Each face: texture origin corner and the corners the texture's right and bottom edges run to.
+      const faceGeometry = {
+        up: { o: [x1, y2, z1], u: [x2, y2, z1], v: [x1, y2, z2], defaultUv: [x1, z1, x2, z2] },
+        north: { o: [x2, y2, z1], u: [x1, y2, z1], v: [x2, y1, z1], defaultUv: [16 - x2, 16 - y2, 16 - x1, 16 - y1] },
+        west: { o: [x1, y2, z1], u: [x1, y2, z2], v: [x1, y1, z1], defaultUv: [z1, 16 - y2, z2, 16 - y1] },
+      };
+      for (const side of ['west', 'north', 'up']) {
+        const face = b.faces[side];
+        if (!face) continue;
+        const img = imgs[face.texture];
+        if (!img) continue;
+        const g = faceGeometry[side];
+        const uv = face.uv || g.defaultUv;
+        const frame = Math.min(img.naturalWidth, img.naturalHeight); // animated textures are tall strips
+        const sx = (uv[0] / 16) * frame;
+        const sy = (uv[1] / 16) * frame;
+        const sw = ((uv[2] - uv[0]) / 16) * frame;
+        const sh = ((uv[3] - uv[1]) / 16) * frame;
+        if (!sw || !sh) continue;
+        const O = project(...g.o);
+        const U = project(...g.u);
+        const V = project(...g.v);
+        ctx.save();
+        // Map the unit square onto the face (origin, right edge, bottom edge), then draw the texture part into it.
+        ctx.setTransform(U[0] - O[0], U[1] - O[1], V[0] - O[0], V[1] - O[1], O[0], O[1]);
+        ctx.imageSmoothingEnabled = false;
+        const source = face.tint ? tinted(img, face.texture, tintFor(face.texture)) : img;
+        ctx.drawImage(source, Math.min(sx, sx + sw), Math.min(sy, sy + sh), Math.abs(sw), Math.abs(sh), 0, 0, 1, 1);
+        ctx.restore();
+        if (shade[side]) {
+          ctx.save();
+          ctx.beginPath();
+          const corners = [g.o, g.u, [g.u[0] + g.v[0] - g.o[0], g.u[1] + g.v[1] - g.o[1], g.u[2] + g.v[2] - g.o[2]], g.v].map((p) => project(...p));
+          ctx.moveTo(...corners[0]);
+          for (const p of corners.slice(1)) ctx.lineTo(...p);
+          ctx.closePath();
+          ctx.fillStyle = `rgba(0, 0, 0, ${shade[side]})`;
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }
+  },
+};
+
 function slotEl(item, key, player, extraClass = '') {
   if (!item) return el('div', { class: `slot ${extraClass}` });
   const label = itemLabel(item);
   const [namespace, itemId] = item.id.includes(':') ? item.id.split(':', 2) : ['minecraft', item.id];
   // Minecraft's vanilla item textures are served per game version. Modded
   // items (or items without a matching texture) use the neutral fallback.
-  const minecraftVersion = current()?.minecraft || '1.21.4';
-  const texture = namespace !== 'minecraft' || !/^[a-z0-9_./-]+$/i.test(itemId)
-    ? null
-    : /^26\./.test(minecraftVersion)
-      ? `https://project-crafting.github.io/minecraft-auto-updated-textures-api/items/${itemId}.png`
-      : `https://mcasset.cloud/${encodeURIComponent(minecraftVersion)}/assets/minecraft/textures/item/${itemId}.png`;
+  const minecraftVersion = current()?.minecraft;
   const artwork = el('span', { class: 'item-fallback', 'aria-hidden': 'true' }, '◇');
-  const image = texture ? el('img', {
-    class: 'item-icon',
-    src: texture,
-    alt: label,
-    title: label,
-    loading: 'lazy',
-    onload: () => artwork.remove(),
-    onerror: (event) => event.currentTarget.remove(),
-  }) : null;
+  let image = null;
+  if (minecraftVersion && /^[a-z0-9_.-]+$/i.test(namespace) && /^[a-z0-9_./-]+$/i.test(itemId)) {
+    // Drawn from the game's own model files, so blocks look like blocks and tools like tools.
+    image = el('canvas', { class: 'item-icon', 'aria-label': label });
+    ItemArt.draw(image, minecraftVersion, item.id, { glint: item.enchanted }).then((ok) => {
+      if (ok) artwork.remove();
+      else image.remove();
+    });
+  }
   return el('div', {
     class: `slot filled ${item.enchanted ? 'enchanted' : ''} ${extraClass}`,
     'aria-label': `${label} × ${item.count}`,

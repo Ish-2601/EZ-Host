@@ -137,6 +137,7 @@ contextBridge.exposeInMainWorld('api', {
   whitelistEnable: invoke('whitelist:enable'),
   whitelistDeny: invoke('whitelist:deny'),
   hostName: invoke('settings:hostName'),
+  itemArt: invoke('items:art'),
   setHostName: invoke('settings:setHostName'),
   onWhitelist: subscribe('server:whitelist'),
   mapDimensions: invoke('map:dimensions'),

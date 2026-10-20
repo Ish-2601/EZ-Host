@@ -47,4 +47,4 @@ async function listReleases() {
   return manifestCache.versions.filter((v) => v.type === 'release').map((v) => ({ id: v.id, releaseTime: v.releaseTime }));
 }
 
-module.exports = { requiredJavaVersion, vanillaServerDownload, fallbackJavaVersion, listReleases };
+module.exports = { getVersionInfo, requiredJavaVersion, vanillaServerDownload, fallbackJavaVersion, listReleases };
