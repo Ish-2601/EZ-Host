@@ -142,15 +142,26 @@ class ServerManager extends EventEmitter {
 
   readConfig(id) {
     const file = path.join(this.serverDir(id), CONFIG_FILE);
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (err) {
+      // Fall back to the copy kept from the last good write (see writeConfig).
+      try {
+        return JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8'));
+      } catch {
+        throw err;
+      }
+    }
   }
 
   async writeConfig(config) {
     const file = path.join(this.serverDir(config.id), CONFIG_FILE);
     // Write a temporary file and swap it in, so a read never sees a half-written config.
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await fsp.writeFile(tmp, JSON.stringify(config, null, 2));
+    const text = JSON.stringify(config, null, 2);
+    await fsp.writeFile(tmp, text);
     await fsp.rename(tmp, file);
+    await fsp.writeFile(`${file}.bak`, text).catch(() => {});
     this.emit('changed');
     return config;
   }
@@ -270,7 +281,16 @@ class ServerManager extends EventEmitter {
     return fs
       .readdirSync(this.paths.servers)
       .filter((id) => fs.existsSync(path.join(this.paths.servers, id, CONFIG_FILE)))
-      .map((id) => this.describe(id))
+      .map((id) => {
+        try {
+          return this.describe(id);
+        } catch (err) {
+          // One damaged server must not hide all the others.
+          console.error(`Skipping server ${id}: ${err.message}`);
+          return null;
+        }
+      })
+      .filter(Boolean)
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 

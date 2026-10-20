@@ -170,6 +170,7 @@
       <nav class="tabs">
         <button class="tab" data-tab="friends">Friends' setup</button>
         <button class="tab" data-tab="players">Players</button>
+        <button class="tab" data-tab="mods">Mods</button>
         <button class="tab" data-tab="world">World</button>
         <button class="tab" data-tab="console">Console</button>
         <button class="tab" data-tab="backups">Backups & tasks</button>
@@ -244,6 +245,30 @@
             <ul id="player-list" class="player-list"></ul>
           </div>
           <div id="player-detail" class="card player-detail"></div>
+        </div>
+      </div>
+
+      <div id="tab-mods" class="tab-panel hidden">
+        <div id="mods-problems" class="card hidden">
+          <h3>Problems found</h3>
+          <p class="muted small">These mods caused trouble or only work in the game itself, not on a server. Turned-off mods stay in the server folder, so you can turn them back on.</p>
+          <ul id="mods-problem-list" class="mod-list"></ul>
+        </div>
+        <div class="card">
+          <div class="map-head">
+            <h3>Mods on this server</h3>
+            <span id="mods-count" class="muted small"></span>
+            <span class="spacer"></span>
+            <input id="mods-search" type="search" placeholder="Search mods" autocomplete="off" />
+            <select id="mods-filter">
+              <option value="all">All mods</option>
+              <option value="on">Turned on</option>
+              <option value="off">Turned off</option>
+              <option value="client">Client-only</option>
+            </select>
+          </div>
+          <p id="mods-running-note" class="muted small hidden">Stop the server to turn mods on or off.</p>
+          <ul id="mods-list" class="mod-list"></ul>
         </div>
       </div>
 
@@ -367,6 +392,11 @@
       </div>
 
       <div id="tab-tools" class="tab-panel hidden">
+        <section id="perf-card" class="card">
+          <div class="row"><h3>Make it run smoothly</h3><span class="spacer"></span><button id="perf-refresh" class="btn btn-ghost">Check again</button></div>
+          <p class="muted small">Java is already tuned for Minecraft automatically (memory clean-up settings that avoid lag spikes, and faster later starts).</p>
+          <div id="perf-body" class="perf-body"></div>
+        </section>
         <div class="grid-2">
           <section id="metrics-card" class="card"><div class="row"><h3>Live health</h3><span class="spacer"></span><span id="metrics-updated" class="muted small"></span></div><div id="metrics-grid" class="metric-grid"></div><label class="small">Warn above (GB) <input id="disk-warning-limit" type="number" min="1" max="1000" value="20" /></label> <button id="disk-warning-save" class="btn">Save limit</button><p id="metrics-note" class="muted small"></p></section>
           <section id="software-card" class="card"><h3>Server software and version</h3><p class="muted small">Switching creates a restore point first. Existing worlds are kept; mods may need to match the new loader and Minecraft version.</p><form id="software-form" class="form"><div class="grid-2"><label>Software<select id="software-type"><option value="vanilla">Vanilla</option><option value="paper">Paper (plugins)</option><option value="fabric">Fabric</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option><option value="quilt">Quilt</option></select></label><label>Minecraft version<select id="software-version"></select></label></div><button class="btn btn-primary" type="submit">Switch software</button><span id="software-status" class="muted small"></span></form></section>
@@ -389,6 +419,19 @@
       </div>
 
       <div id="tab-settings" class="tab-panel hidden">
+        <div class="card icon-card">
+          <h3>Server icon</h3>
+          <div class="row">
+            <img id="server-icon-preview" class="server-icon-preview" alt="" />
+            <div>
+              <p class="muted small">Shown next to your server in everyone's Multiplayer list. Any picture works; it is cropped to a square and resized to 64 by 64. Players see it after the next restart.</p>
+              <div class="row wrap">
+                <button id="server-icon-choose" class="btn btn-primary" type="button">Choose picture…</button>
+                <button id="server-icon-remove" class="btn" type="button">Remove</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <form id="settings-form" class="card form">
           <label>Server name <input id="set-name" type="text" maxlength="64" /></label>
           <label>Memory: <strong id="set-ram-label"></strong>

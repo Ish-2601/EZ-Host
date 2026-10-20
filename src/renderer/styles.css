@@ -345,3 +345,30 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .map-legend .legend-item { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .map-legend .legend-item input { margin: 0; accent-color: var(--accent); }
 .map-legend .legend-item.off { opacity: .55; }
+
+/* ---------- Mods ---------- */
+#mods-search { max-width: 220px; }
+#mods-filter { width: auto; }
+.mod-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 560px; overflow-y: auto; }
+.mod-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; }
+.mod-row:hover { background: var(--panel-2); }
+.mod-row.off .mod-name { color: var(--muted); }
+.mod-main { flex: 1; min-width: 0; }
+.mod-name { font-weight: 500; }
+.mod-meta { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mod-reason { font-size: 12px; color: var(--warn); }
+.badge { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--panel-3); color: var(--muted); margin-left: 6px; white-space: nowrap; }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.bad { background: var(--danger-soft); color: var(--danger); }
+
+/* ---------- Performance ---------- */
+.perf-body { display: flex; flex-direction: column; gap: 14px; }
+.perf-section h4 { margin: 0 0 6px; font-size: 13px; }
+.perf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.perf-table td { padding: 6px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+.perf-table td.why { color: var(--muted); font-size: 12px; }
+.perf-table .changed { color: var(--warn); }
+.perf-mods { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---------- Server icon ---------- */
+.server-icon-preview { width: 64px; height: 64px; border-radius: 6px; image-rendering: pixelated; background: var(--panel-3); flex-shrink: 0; }

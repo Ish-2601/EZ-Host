@@ -2,7 +2,7 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs/promises');
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Notification, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Notification, safeStorage, nativeImage } = require('electron');
 const { ServerManager } = require('../engine/manager');
 const modrinth = require('../engine/modrinth');
 const cohostAuth = require('../engine/cohost-auth');
@@ -57,6 +57,9 @@ const CHANNEL_PERMISSION = {
   'servers:exportStatusPage': 'server', 'system:copy': 'server', 'system:totalMemoryMb': 'server',
   'settings:notifications': 'settings', 'settings:setNotifications': 'settings',
   'minecraft:versions': 'server',
+  'mods:overview': 'server', 'mods:setEnabled': 'settings',
+  'perf:advice': 'server', 'perf:applySettings': 'settings', 'perf:installMods': 'settings', 'servers:setMemory': 'settings',
+  'servers:icon': 'server', 'servers:chooseIcon': 'settings', 'servers:removeIcon': 'settings',
   'sftp:start': 'settings', 'sftp:stop': 'settings', 'sftp:status': 'settings',
   'status:start': 'settings', 'status:stop': 'settings', 'status:state': 'settings', 'status:open': 'settings',
 };
@@ -416,6 +419,34 @@ function registerIpc() {
   handle('players:details', (id, uuid) => manager.playerDetails(id, uuid));
   handle('players:action', (id, uuid, action, args) => manager.playerAction(id, uuid, action, args));
   handle('servers:installChunky', (id) => manager.installChunky(id));
+  handle('mods:overview', (id) => manager.modsOverview(id));
+  handle('mods:setEnabled', (id, fileName, enabled) => manager.setModEnabled(id, fileName, Boolean(enabled)));
+  handle('perf:advice', (id) => manager.performanceAdvice(id));
+  handle('perf:applySettings', (id) => manager.applyPerformanceSettings(id));
+  handle('perf:installMods', (id, slugs) => manager.installPerformanceMods(id, Array.isArray(slugs) ? slugs : []));
+  handle('servers:setMemory', (id, mb) => {
+    const value = Math.round(Number(mb) / 512) * 512;
+    if (!(value >= 1024 && value <= 65536)) throw new Error('Invalid memory amount');
+    return manager.updateConfig(id, { memoryMb: value });
+  });
+  handle('servers:icon', (id) => manager.serverIcon(id));
+  handle('servers:removeIcon', (id) => manager.setServerIcon(id, null));
+  handle('servers:chooseIcon', async (id) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose a server icon',
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const image = nativeImage.createFromPath(result.filePaths[0]);
+    if (image.isEmpty()) throw new Error('That file is not an image Self-Host MC can read');
+    // Minecraft only shows a 64x64 PNG: crop to a centred square, then resize.
+    const { width, height } = image.getSize();
+    const side = Math.min(width, height);
+    const square = image.crop({ x: Math.floor((width - side) / 2), y: Math.floor((height - side) / 2), width: side, height: side });
+    const png = square.resize({ width: 64, height: 64, quality: 'best' }).toPNG();
+    return manager.setServerIcon(id, png);
+  });
   handle('servers:pregenStart', (id, radius) => manager.startPregen(id, radius));
   handle('servers:pregenPause', (id) => manager.pausePregen(id));
   handle('servers:pregenContinue', (id) => manager.continuePregen(id));
@@ -486,6 +517,7 @@ function registerIpc() {
   manager.on('pregen', (id, state) => send('server:pregen', id, state));
   manager.on('whitelist', (id, state) => send('server:whitelist', id, state));
   manager.on('backup', (id, state) => send('server:backup', id, state));
+  manager.on('mods', (id) => send('server:mods', id));
   manager.on('task', (id, state) => send('server:task', id, state));
   manager.on('attention', (id, state) => {
     send('server:attention', id, state);

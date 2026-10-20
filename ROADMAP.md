@@ -81,12 +81,15 @@ Status: all six are built (2026-10-19). Tested on a throwaway server: pregenerat
 | Detailed map style (biome colors and structure markers such as villages and temples), map auto-refresh (10 s by default, or manual), right-click player menu (OP, teleport, game mode, heal, feed, kick, ban, kill), crown on OPs, whitelist off by default with one-click on and a "Trying to join" list with Approve/Deny | Ishaan asked for a seed-map style view and for everyday moderation without typing commands. |
 | World map of explored chunks with live player heads. Select chunks to keep them loaded even with nobody nearby (for farms), and remove that again | Lets the host see the world and keep iron farms and similar builds running. |
 
+## Phase 1.6: performance and mods (2026-10-19)
+
+Built: startup progress with stages and a stall warning; hung-start detection (Forge can hang after a failed start); client-only mods that crash the server are turned off automatically and the server retries; a Mods tab listing every mod with on/off switches and detected problems; tuned Java (G1 settings, shared class archive on Java 19+); memory, settings and performance-mod suggestions; tick-rate monitor for Forge, NeoForge and vanilla; custom server icon.
+
 ## Phase 2: reliability
 
 | Feature | Why it matters |
 | --- | --- |
 | Crash detection with a plain-language reason (missing mod, wrong Java, out of memory) and a suggested fix | Modded servers often fail on the first start. Users need to know what to do, not read stack traces. |
-| Automatic retry for client-only mods: if a crash names a client-only class, disable that mod and try again | Most first-start crashes in community packs are caused by this. |
 | Auto-restart if the server crashes while running | Friends shouldn't have to wait for the host to notice. |
 | World backups: automatic before updates and on a schedule, with one-click restore | Mods corrupt worlds. Backups are the safety net. |
 | RAM guidance from pack size and PC memory | Too little RAM crashes servers. Too much starves Windows. |

@@ -2,7 +2,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { Server, utils, sftp: { OPEN_MODE, STATUS_CODE } } = require('ssh2');
+const { Server, utils } = require('ssh2');
+// ssh2 1.x exposes the SFTP constants under utils.sftp.
+const { OPEN_MODE, STATUS_CODE } = utils.sftp;
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(left), b = Buffer.from(right);

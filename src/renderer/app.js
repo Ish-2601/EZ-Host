@@ -454,7 +454,11 @@ function renderStatus(s) {
   } else if (s.crashed) {
     problem = true;
     dot = 'error';
-    help = 'The server stopped by itself. The Console tab shows what went wrong.';
+    const f = s.lastFailure;
+    const fixed = f && f.mods ? f.mods.filter((m) => m.clientOnly).map((m) => m.name) : [];
+    help = fixed.length
+      ? `${fixed.join(', ')} only work${fixed.length === 1 ? 's' : ''} in the game, not on a server, so Self-Host MC turned ${fixed.length === 1 ? 'it' : 'them'} off and is trying again. See the Mods tab.`
+      : f && f.summary ? f.summary : 'The server stopped by itself. The Console tab shows what went wrong.';
   } else if (!s.eulaAccepted) {
     help = 'Ready for its first start. You will be asked to accept the Minecraft EULA.';
   } else {
@@ -1309,7 +1313,10 @@ async function deleteServer(s) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  for (const tab of ['friends', 'players', 'world', 'console', 'backups', 'files', 'tools', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
+  for (const tab of ['friends', 'players', 'mods', 'world', 'console', 'backups', 'files', 'tools', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
+  if (name === 'mods') loadMods();
+  if (name === 'tools') loadPerformance();
+  if (name === 'settings') loadServerIcon();
   if (name === 'world') loadWorld();
   else if (typeof WorldMap !== 'undefined') WorldMap.close();
   clearInterval(state.playerTimer);
@@ -1333,6 +1340,152 @@ function switchTab(name) {
   }
 }
 
+// ---------- mods tab ----------
+
+async function loadMods() {
+  const id = state.selectedId;
+  fill($('mods-list'), el('li', { class: 'muted' }, 'Reading the mods folder…'));
+  const data = await attempt(() => api.modsOverview(id));
+  if (!data || id !== state.selectedId) return;
+  state.mods = data;
+  renderMods();
+}
+
+function modRow(m, running) {
+  const toggle = el('label', { class: 'switch', title: running ? 'Stop the server to change mods' : m.enabled ? 'Turn off' : 'Turn on' },
+    el('input', { type: 'checkbox' }), el('span', { class: 'switch-track' }));
+  const box = toggle.querySelector('input');
+  box.checked = m.enabled;
+  box.disabled = running;
+  box.onchange = async () => {
+    if (!box.checked && m.neededBy.length && !confirm(`${m.neededBy.slice(0, 5).join(', ')}${m.neededBy.length > 5 ? ' and others' : ''} need${m.neededBy.length === 1 ? 's' : ''} ${m.name}. Turning it off will probably stop the server from starting. Turn it off anyway?`)) {
+      box.checked = true;
+      return;
+    }
+    const ok = await attempt(async () => (await api.setModEnabled(state.selectedId, m.fileName, box.checked), true));
+    if (!ok) box.checked = !box.checked;
+    loadMods();
+  };
+  const badges = [];
+  if (m.issue && m.issue.autoDisabled && !m.enabled) badges.push(el('span', { class: 'badge warn' }, 'Turned off automatically'));
+  else if (m.issue && m.issue.kind === 'failed') badges.push(el('span', { class: 'badge bad' }, 'Failed to load'));
+  if (m.clientOnly) badges.push(el('span', { class: 'badge warn' }, 'Client-only'));
+  if (m.neededBy.length) badges.push(el('span', { class: 'badge', title: `Needed by ${m.neededBy.join(', ')}` }, `Needed by ${m.neededBy.length}`));
+  return el('li', { class: `mod-row${m.enabled ? '' : ' off'}` },
+    toggle,
+    el('div', { class: 'mod-main' },
+      el('div', {}, el('span', { class: 'mod-name' }, m.name), badges),
+      el('div', { class: 'mod-meta', title: m.description || '' }, [m.version, m.fileName].filter(Boolean).join(' · ')),
+      m.issue ? el('div', { class: 'mod-reason' }, m.issue.reason)
+        : m.clientOnly && m.enabled ? el('div', { class: 'mod-reason' }, 'Modrinth lists this as a mod that only works in the game. It may crash the server or do nothing.') : null
+    )
+  );
+}
+
+function renderMods() {
+  const data = state.mods;
+  if (!data) return;
+  const running = data.running;
+  $('mods-running-note').classList.toggle('hidden', !running);
+  const problems = data.mods.filter((m) => m.issue || (m.clientOnly && m.enabled));
+  $('mods-problems').classList.toggle('hidden', !problems.length);
+  fill($('mods-problem-list'), problems.map((m) => modRow(m, running)));
+  const on = data.mods.filter((m) => m.enabled).length;
+  $('mods-count').textContent = `${on} on, ${data.mods.length - on} off`;
+  const q = $('mods-search').value.trim().toLowerCase();
+  const filter = $('mods-filter').value;
+  const shown = data.mods.filter((m) =>
+    (!q || m.name.toLowerCase().includes(q) || m.fileName.toLowerCase().includes(q)) &&
+    (filter === 'all' || (filter === 'on' && m.enabled) || (filter === 'off' && !m.enabled) || (filter === 'client' && m.clientOnly)));
+  fill($('mods-list'),
+    data.mods.length ? null : el('li', { class: 'muted' }, data.loader === 'vanilla' ? 'Plain Minecraft servers have no mods.' : 'No mods yet.'),
+    data.mods.length && !shown.length ? el('li', { class: 'muted' }, 'No mods match.') : null,
+    shown.slice(0, 600).map((m) => modRow(m, running)));
+}
+
+// ---------- performance card ----------
+
+async function loadPerformance() {
+  const id = state.selectedId;
+  const body = $('perf-body');
+  fill(body, el('p', { class: 'muted small' }, 'Checking…'));
+  const a = await attempt(() => api.perfAdvice(id));
+  if (!a || id !== state.selectedId) return;
+  const s = current();
+  const running = s && ['starting', 'running', 'stopping'].includes(s.status);
+  const sections = [];
+
+  // Memory
+  const memRow = el('div', { class: 'row wrap' },
+    el('span', {}, `Memory: ${formatMb(a.memoryMb)}`),
+    el('span', { class: 'muted small' }, `Suggested for ${a.modCount} mods on this PC (${formatMb(a.systemMemoryMb)}): ${formatMb(a.recommendedMemoryMb)}`));
+  if (Math.abs(a.memoryMb - a.recommendedMemoryMb) >= 1024) {
+    const b = el('button', { class: 'btn', type: 'button' }, `Use ${formatMb(a.recommendedMemoryMb)}`);
+    b.onclick = async () => {
+      if (await attempt(() => api.setMemory(id, a.recommendedMemoryMb))) {
+        toast(`Memory set to ${formatMb(a.recommendedMemoryMb)}. It applies on the next start.`);
+        await refreshServers();
+        loadPerformance();
+      }
+    };
+    memRow.append(b);
+  }
+  sections.push(el('div', { class: 'perf-section' }, el('h4', {}, 'Memory'), memRow));
+
+  // Settings
+  const differs = a.settings.filter((x) => String(x.current) !== String(x.recommended));
+  const table = el('table', { class: 'perf-table' }, el('tbody', {},
+    a.settings.map((x) => el('tr', {},
+      el('td', {}, x.label),
+      el('td', { class: String(x.current) !== String(x.recommended) ? 'changed' : '' }, x.current == null ? 'default' : x.current, ' → ', x.recommended),
+      el('td', { class: 'why' }, x.why)))));
+  const apply = el('button', { class: 'btn btn-primary', type: 'button' }, differs.length ? 'Apply recommended settings' : 'All set');
+  apply.disabled = !differs.length;
+  apply.onclick = async () => {
+    if (await attempt(() => api.perfApplySettings(id))) {
+      toast(running ? 'Saved. Restart the server to use the new settings.' : 'Saved. They apply on the next start.');
+      loadPerformance();
+    }
+  };
+  sections.push(el('div', { class: 'perf-section' }, el('h4', {}, 'Server settings'), table, el('div', { class: 'row' }, apply)));
+
+  // Performance mods
+  if (a.perfMods.length) {
+    const missing = a.perfMods.filter((m) => !m.installed);
+    const list = el('div', { class: 'perf-mods' }, a.perfMods.map((m) => el('label', { class: 'checkbox' },
+      el('input', { type: 'checkbox', value: m.slug, disabled: m.installed || null, checked: !m.installed || null }),
+      el('span', {}, el('strong', {}, m.name), m.installed ? el('span', { class: 'badge' }, 'Installed') : null, el('span', { class: 'muted small' }, ` ${m.what}`)))));
+    const add = el('button', { class: 'btn btn-primary', type: 'button' }, 'Add selected');
+    add.disabled = !missing.length || running;
+    add.onclick = async () => {
+      const slugs = [...list.querySelectorAll('input:checked:not(:disabled)')].map((i) => i.value);
+      if (!slugs.length) return;
+      add.disabled = true;
+      add.textContent = 'Adding…';
+      if (await attempt(async () => (await api.perfInstallMods(id, slugs), true))) toast('Added. They load on the next start. Players do not need them.');
+      loadPerformance();
+    };
+    sections.push(el('div', { class: 'perf-section' },
+      el('h4', {}, 'Performance mods'),
+      el('p', { class: 'muted small' }, 'Server-side mods that speed things up without changing gameplay. Players do not need to install them.'),
+      list,
+      el('div', { class: 'row' }, add, running ? el('span', { class: 'muted small' }, 'Stop the server to add mods.') : null)));
+  }
+
+  sections.push(el('div', { class: 'perf-section' },
+    el('h4', {}, 'Less lag while exploring'),
+    el('p', { class: 'muted small' }, 'Generating new land is the biggest cause of lag on modded servers. Pregenerate the area around spawn on the World tab while nobody is playing.')));
+  fill(body, sections);
+}
+
+// ---------- server icon ----------
+
+async function loadServerIcon() {
+  const icon = await attempt(() => api.serverIcon(state.selectedId));
+  $('server-icon-preview').src = icon || 'icon.svg';
+  $('server-icon-remove').disabled = !icon;
+}
+
 function hasPermission(permission) {
   return state.auth.host || (state.auth.permissions || []).includes(permission);
 }
@@ -1346,7 +1499,7 @@ async function updateMetrics() {
     ['Java memory', m.memoryUsedMb == null ? '—' : `${formatMb(m.memoryUsedMb)} / ${formatMb(current()?.memoryMb || 0)}`],
     ['Host memory', `${formatMb(m.systemMemoryUsedMb)} / ${formatMb(m.systemMemoryMb)}`],
     ['Players', `${m.playerCount} / ${m.maxPlayers || '—'}`],
-    ['Tick rate', m.tps == null ? 'Unavailable' : `${m.tps.toFixed(1)} TPS`],
+    ['Tick rate', m.tps == null ? 'Unavailable' : `${m.tps.toFixed(1)} TPS${m.msPerTick != null ? ` · ${m.msPerTick} ms per tick` : ''}`],
     ['Server files', `${formatBytes(m.diskBytes)}${m.diskScanLimited ? '+' : ''}`],
   ];
   $('metrics-grid').replaceChildren(...rows.map(([label, value], index) => {
@@ -1357,7 +1510,9 @@ async function updateMetrics() {
   if (document.activeElement !== $('disk-warning-limit')) $('disk-warning-limit').value = m.diskWarningGb;
   $('metrics-note').textContent = m.diskWarning
     ? `Disk usage has passed the ${m.diskWarningGb} GB warning limit. Remove old backups or unused files.`
-    : m.tps == null ? 'TPS is reported by Paper servers. Vanilla servers do not expose tick performance to the app.' : '';
+    : m.tps == null ? 'The tick rate shows once the server is running (Minecraft 1.20.3+, Forge, NeoForge or Paper).'
+    : m.msPerTick != null && m.msPerTick > 50 ? `The server is lagging: each tick takes ${m.msPerTick} ms (it should be under 50). Try the suggestions in "Make it run smoothly".`
+    : '';
 }
 
 function renderQuickCommands() {
@@ -1988,6 +2143,23 @@ function wire() {
       renderServer(s);
       if (!$('tab-world').classList.contains('hidden')) loadWorld();
     }
+  });
+  $('mods-search').oninput = renderMods;
+  $('mods-filter').onchange = renderMods;
+  $('perf-refresh').onclick = loadPerformance;
+  $('server-icon-choose').onclick = async () => {
+    const icon = await attempt(() => api.chooseServerIcon(state.selectedId));
+    if (icon) {
+      toast('Icon saved. Players see it after the next restart.');
+      loadServerIcon();
+    }
+  };
+  $('server-icon-remove').onclick = async () => {
+    await attempt(() => api.removeServerIcon(state.selectedId));
+    loadServerIcon();
+  };
+  api.onMods((id) => {
+    if (id === state.selectedId && !$('tab-mods').classList.contains('hidden')) loadMods();
   });
   api.onStartup((id, startup) => {
     if (startup.phase === 'ready' || startup.phase === 'failed' || startup.phase === 'stopping') delete state.startup[id];
