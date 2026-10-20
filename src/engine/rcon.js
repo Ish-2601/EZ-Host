@@ -17,7 +17,10 @@ function packet(id, type, body) {
 }
 
 class Rcon {
-  constructor({ host = '127.0.0.1', port, password }) {
+  // multiPacket: Minecraft answers an unknown packet type, which marks the end of
+  // long replies. Other games (Project Zomboid) ignore it, so they use one packet per reply.
+  constructor({ host = '127.0.0.1', port, password, multiPacket = true }) {
+    this.multiPacket = multiPacket;
     this.host = host;
     this.port = port;
     this.password = password;
@@ -147,7 +150,7 @@ class Rcon {
   command(cmd) {
     const run = async () => {
       await this.connect();
-      return this.sendCommand(cmd);
+      return this.multiPacket ? this.sendCommand(cmd) : this.send(TYPE_COMMAND, cmd);
     };
     const result = this.queue.then(run, run);
     this.queue = result.catch(() => {});

@@ -30,6 +30,7 @@ const serverFiles = require('./server-files');
 const paper = require('./paper');
 const AdmZip = require('adm-zip');
 const modsLib = require('./mods');
+const { ZomboidGame } = require('../games/zomboid');
 const { readIndex, describeDependencies } = require('./mrpack');
 
 const CONFIG_FILE = 'selfhost.json';
@@ -129,6 +130,7 @@ class ServerManager extends EventEmitter {
     this.schedulerTimer.unref();
     this.shuttingDown = false;
     this.mapRenderer = new worldMap.MapRenderer();
+    this.zomboid = new ZomboidGame(this);
     this.playit = new Playit(dataRoot);
     this.playit.on('status', (state) => this.emit('playit', state));
     this.playit.on('log', (line) => this.emit('playit-log', line));
@@ -203,7 +205,7 @@ class ServerManager extends EventEmitter {
         const found = output.match(/TPS from last\s+1m[^:]*:\s*([\d.]+)/i);
         if (found) this.lastTps.set(id, Number(found[1]));
       } catch {}
-    } else if (this.isRunning(id)) {
+    } else if (this.isRunning(id) && !this.isZomboid(id)) {
       await this.sampleTick(id).catch(() => {});
     }
     const pid = proc && proc.child && Number(proc.child.pid);
@@ -613,9 +615,17 @@ class ServerManager extends EventEmitter {
   }
 
   /** Addresses players can use to join. */
+  isZomboid(id) {
+    try {
+      return this.readConfig(id).game === 'zomboid';
+    } catch {
+      return false;
+    }
+  }
+
   joinInfo(id) {
-    const props = this.readProperties(id);
-    const port = Number(props['server-port']) || 25565;
+    const props = this.isZomboid(id) ? {} : this.readProperties(id);
+    const port = this.isZomboid(id) ? Number(this.readConfig(id).port) : Number(props['server-port']) || 25565;
     const lan = [];
     for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
       for (const a of addrs || []) {
@@ -639,6 +649,7 @@ class ServerManager extends EventEmitter {
 
   async start(id, { automatic = false } = {}) {
     const config = this.readConfig(id);
+    if (config.game === 'zomboid') return this.startZomboid(id, { automatic });
     if (this.installing.has(id)) throw new Error('Server is still installing');
     if (!config.installed) throw new Error('Server is not installed');
     if (!config.eulaAccepted) throw new Error('Accept the Minecraft EULA before starting the server');
@@ -943,6 +954,7 @@ class ServerManager extends EventEmitter {
 
   /** Every mod with its on/off state, plus known problems and what depends on what. */
   async modsOverview(id) {
+    if (this.isZomboid(id)) return this.zomboid.modsOverview(id);
     const serverDir = this.serverDir(id);
     const mods = modsLib.listMods(serverDir);
     const config = this.readConfig(id);
@@ -984,6 +996,11 @@ class ServerManager extends EventEmitter {
   }
 
   async setModEnabled(id, fileName, enabled) {
+    if (this.isZomboid(id)) {
+      const result = this.zomboid.setModEnabled(id, fileName, enabled);
+      this.emit('mods', id);
+      return result;
+    }
     const proc = this.processes.get(id);
     if ((proc && proc.child) || this.startupStates.has(id)) throw new Error('Stop the server before turning mods on or off');
     await modsLib.setModEnabled(this.serverDir(id), fileName, enabled);
@@ -994,6 +1011,73 @@ class ServerManager extends EventEmitter {
       await this.updateConfig(id, { modIssues: issues });
     }
     this.emit('mods', id);
+  }
+
+  /** Start a Project Zomboid server (same events and states as a Minecraft start). */
+  async startZomboid(id, { automatic = false } = {}) {
+    const config = this.readConfig(id);
+    if (this.installing.has(id)) throw new Error('Server is still installing');
+    if (!config.installed) throw new Error('Server is not installed');
+    const existing = this.processes.get(id);
+    if ((existing && existing.child) || this.startupStates.has(id)) throw new Error('Server is already running or starting');
+    if (!automatic) this.crashRetries.delete(id);
+    const startedAt = Date.now();
+    const startup = (phase, label, progress) => {
+      const value = { phase, label, startedAt, ...(progress ? { progress } : {}) };
+      this.startupStates.set(id, value);
+      this.emit('startup', id, value);
+    };
+    startup('prepare', 'Checking for Project Zomboid updates');
+    this.emit('status', id, 'starting');
+    try {
+      const log = (text) => this.emit('console', id, { text, stream: 'system' });
+      const proc = await this.zomboid.createProcess(id, {
+        log,
+        progress: (label, done, total) => startup('update', label, { done, total }),
+      });
+      this.lastFailure.delete(id);
+      proc.on('progress', (p) => {
+        if (!this.startupStates.has(id)) return;
+        startup('loading', p.failure ? p.failure.summary : p.stalled ? `${p.stage} (no output for 5 minutes; it may be stuck)` : p.stage, { done: p.percent, total: 100 });
+      });
+      proc.on('line', (text, stream) => this.emit('console', id, { text, stream }));
+      proc.on('status', (status) => {
+        if (status === 'running') {
+          if (proc.startupMs) this.updateConfig(id, { lastStartMs: proc.startupMs }).catch(() => {});
+          this.startupStates.delete(id);
+          this.emit('startup', id, { phase: 'ready', label: 'Server is ready', startedAt });
+        } else if (status === 'stopped' && this.startupStates.has(id)) {
+          this.startupStates.delete(id);
+          this.emit('startup', id, { phase: 'failed', label: 'Server stopped before startup finished', startedAt });
+        }
+        this.emit('status', id, status);
+      });
+      proc.on('players', (players) => this.emit('players', id, players));
+      proc.on('exit', () => {
+        this.closeRcon(id);
+        const tunnel = this.tunnels.get(id);
+        if (tunnel) this.setTunnel(id, { ...tunnel, state: 'stopped', message: '' });
+        const anyRunning = [...this.processes.values()].some((p) => p.child);
+        if (!anyRunning) this.playit.stop().catch(() => {});
+        let retry = proc.crashed;
+        if (proc.failure) {
+          this.lastFailure.set(id, proc.failure);
+          if (['port', 'memory'].includes(proc.failure.kind)) retry = false;
+        }
+        if (retry && !this.shuttingDown && this.readConfig(id).autoRestart !== false) this.scheduleCrashRestart(id);
+      });
+      this.processes.set(id, proc);
+      startup('launch', 'Launching the Project Zomboid server');
+      proc.start();
+      if (this.playit.isLinked()) this.startTunnel(id).catch(() => {});
+      return this.describe(id);
+    } catch (err) {
+      this.startupStates.delete(id);
+      this.emit('console', id, { text: `Could not start server: ${err.message}`, stream: 'system' });
+      this.emit('startup', id, { phase: 'failed', label: err.message, startedAt });
+      this.emit('status', id, 'stopped');
+      throw err;
+    }
   }
 
   scheduleCrashRestart(id) {
@@ -1082,11 +1166,13 @@ class ServerManager extends EventEmitter {
       const claimed = this.list()
         .filter((s) => s.id !== id && s.tunnelId)
         .map((s) => s.tunnelId);
+      const zomboid = config.game === 'zomboid';
       const { tunnelId, address, notices } = await this.playit.ensureTunnel({
         tunnelId: config.tunnelId,
-        port: this.serverPort(id),
+        port: zomboid ? Number(config.port) : this.serverPort(id),
         name: config.name,
         claimed,
+        kind: zomboid ? 'udp-2' : 'minecraft-java',
       });
       if (config.tunnelId !== tunnelId || config.address !== address) await this.updateConfig(id, { tunnelId, address });
       const warning = notices.find((n) => n.priority === 'Critical' || n.priority === 'High');
@@ -1146,9 +1232,13 @@ class ServerManager extends EventEmitter {
     if (proc.status !== 'running') throw new Error('Wait until the server has finished starting');
     let client = this.rcons.get(id);
     if (!client) {
-      const props = this.readProperties(id);
-      if (props['enable-rcon'] !== 'true') throw new Error('Restart the server once so the app can control it');
-      client = new Rcon({ port: Number(props['rcon.port']), password: props['rcon.password'] });
+      if (this.isZomboid(id)) {
+        client = new Rcon(this.zomboid.rconInfo(id));
+      } else {
+        const props = this.readProperties(id);
+        if (props['enable-rcon'] !== 'true') throw new Error('Restart the server once so the app can control it');
+        client = new Rcon({ port: Number(props['rcon.port']), password: props['rcon.password'] });
+      }
       this.rcons.set(id, client);
     }
     try {
@@ -1159,6 +1249,11 @@ class ServerManager extends EventEmitter {
       // Minecraft 26.3 drops RCON connections that sit idle for a couple of
       // seconds; reconnect once and try again.
       if (!retried && /closed|not connected|ECONNRESET|EPIPE/i.test(err.message)) return this.rcon(id, command, true);
+      // Zomboid opens RCON a few seconds after it reports that it started.
+      if (/ECONNREFUSED/.test(err.message) && (retried === false || typeof retried === 'number') && (Number(retried) || 0) < 5 && this.isZomboid(id)) {
+        await new Promise((r) => setTimeout(r, 2000));
+        return this.rcon(id, command, (Number(retried) || 0) + 1);
+      }
       throw err;
     }
   }
@@ -1166,6 +1261,7 @@ class ServerManager extends EventEmitter {
   /** Ask the server who is online (/list) and update the app's list to match. */
   async syncOnlinePlayers(id) {
     if (!this.isRunning(id)) return this.players(id);
+    if (this.isZomboid(id)) return this.zomboid.syncOnline(id);
     const out = await this.rcon(id, 'list');
     const m = out.match(/online:\s*(.*)$/s);
     const names = m && m[1].trim() ? m[1].split(',').map((n) => n.trim()).filter((n) => /^\w{3,16}$/.test(n)) : [];
@@ -1268,6 +1364,7 @@ class ServerManager extends EventEmitter {
   }
 
   whitelistStatus(id) {
+    if (this.isZomboid(id)) return this.zomboid.whitelistStatus(id);
     const props = this.readProperties(id);
     const listed = new Set(this.readWhitelist(id).map((p) => p.name.toLowerCase()));
     const dismissed = new Set((this.readConfig(id).dismissedJoiners || []).map((n) => n.toLowerCase()));
@@ -1316,7 +1413,12 @@ class ServerManager extends EventEmitter {
     return { uuid, name: profile.name };
   }
 
-  async whitelistAdd(id, name) {
+  async whitelistAdd(id, name, password) {
+    if (this.isZomboid(id)) {
+      const result = await this.zomboid.whitelistAdd(id, name, password);
+      this.emit('whitelist', id, this.whitelistStatus(id));
+      return result;
+    }
     if (this.isRunning(id)) {
       const out = await this.rcon(id, `whitelist add ${name}`);
       if (/does not exist|Unknown/i.test(out)) throw new Error(`No Minecraft account is called "${name}"`);
@@ -1332,6 +1434,11 @@ class ServerManager extends EventEmitter {
   }
 
   async whitelistRemove(id, name) {
+    if (this.isZomboid(id)) {
+      await this.zomboid.whitelistRemove(id, name);
+      this.emit('whitelist', id, this.whitelistStatus(id));
+      return;
+    }
     if (this.isRunning(id)) await this.rcon(id, `whitelist remove ${name}`);
     else {
       const list = this.readWhitelist(id).filter((p) => p.name.toLowerCase() !== String(name).toLowerCase());
@@ -1341,6 +1448,11 @@ class ServerManager extends EventEmitter {
   }
 
   async setWhitelistEnabled(id, enabled) {
+    if (this.isZomboid(id)) {
+      await this.zomboid.setWhitelistEnabled(id, enabled);
+      this.emit('whitelist', id, this.whitelistStatus(id));
+      return;
+    }
     // enforce-whitelist kicks anyone not on the list when it is turned on.
     await this.writeProperties(id, { 'white-list': String(enabled), 'enforce-whitelist': String(enabled) });
     // Sent through the console: on 26.3, 'whitelist on' over RCON drops the RCON connection.
@@ -1395,6 +1507,10 @@ class ServerManager extends EventEmitter {
 
   /** Fill in names missing from usercache.json using Mojang's public profile lookup. */
   async listPlayersWithNames(id) {
+    if (this.isZomboid(id)) {
+      await this.syncOnlinePlayers(id).catch(() => {});
+      return this.zomboid.listPlayers(id);
+    }
     await this.syncOnlinePlayers(id).catch(() => {});
     const list = this.listPlayersOf(id);
     await Promise.all(
@@ -1428,6 +1544,11 @@ class ServerManager extends EventEmitter {
 
   /** Health, hunger, inventory and ender chest; live for online players, from the save file otherwise. */
   async playerDetails(id, uuid) {
+    if (this.isZomboid(id)) {
+      const p = this.zomboid.listPlayers(id).find((x) => x.uuid === uuid);
+      if (!p) throw new Error('Player not found');
+      return { ...p, zomboid: true };
+    }
     await this.syncOnlinePlayers(id).catch(() => {});
     const player = this.findPlayer(id, uuid);
     if (player.online && this.isRunning(id)) {
@@ -1445,6 +1566,7 @@ class ServerManager extends EventEmitter {
    * Online players get commands; offline players have their save file edited.
    */
   async playerAction(id, uuid, action, args = {}) {
+    if (this.isZomboid(id)) return this.zomboid.playerAction(id, String(uuid).replace(/^zomboid:/, ''), action, args);
     await this.syncOnlinePlayers(id).catch(() => {});
     const player = this.findPlayer(id, uuid);
     const running = this.isRunning(id);

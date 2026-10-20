@@ -171,14 +171,16 @@ class Playit extends EventEmitter {
    * `claimed` lists tunnel ids other servers already use, so they are not taken over.
    * Returns { tunnelId, address, notices }.
    */
-  async ensureTunnel({ tunnelId, port, name, claimed = [] }) {
+  async ensureTunnel({ tunnelId, port, name, claimed = [], kind = 'minecraft-java' }) {
+    // kind: 'minecraft-java' (one TCP port) or 'udp-2' (two UDP ports, e.g. Project Zomboid).
+    const udp = kind === 'udp-2';
     const secret = this.readSecret();
     const data = await this.runData();
     const portOf = (t) => {
       const f = t.agent_config && t.agent_config.fields.find((x) => x.name === 'local_port');
       return f ? Number(f.value) : null;
     };
-    const isMc = (t) => t.tunnel_type === 'minecraft-java';
+    const isMc = (t) => (udp ? t.port_type === 'udp' && !t.tunnel_type : t.tunnel_type === 'minecraft-java');
     let tunnel = tunnelId && data.tunnels.find((t) => t.id === tunnelId);
     if (!tunnel) {
       // Adopt an unclaimed tunnel already pointing at this port (made before
@@ -199,9 +201,11 @@ class Playit extends EventEmitter {
         '/tunnels/create',
         {
           name: `${TUNNEL_NAME}: ${name}`.slice(0, 60).replace(/[^ -~]/g, ''),
-          tunnel_type: 'minecraft-java',
-          port_type: 'tcp',
-          port_count: 1,
+          tunnel_type: udp ? null : 'minecraft-java',
+          // Custom (non-Minecraft) tunnels must say what they are for.
+          ...(udp ? { tunnel_description: `${name} (game server)`.slice(0, 60).replace(/[^ -~]/g, '') } : {}),
+          port_type: udp ? 'udp' : 'tcp',
+          port_count: udp ? 2 : 1,
           origin: { type: 'agent', data: { agent_id: data.agent_id, local_ip: '127.0.0.1', local_port: port } },
           enabled: true,
           alloc: null,
@@ -209,7 +213,14 @@ class Playit extends EventEmitter {
           proxy_protocol: null,
         },
         secret
-      );
+      ).catch((err) => {
+        if (err.data === 'RequiresVerifiedAccount') {
+          const e = new PlayitError('playit.gg needs you to verify your email address before it can give this game an online address. Check your inbox for the playit.gg email, click the link, then press Try again.');
+          e.resolveLink = 'https://playit.gg/account';
+          throw e;
+        }
+        throw err;
+      });
       tunnel = { id: created.id };
     }
     const id = tunnel.id;
