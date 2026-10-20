@@ -33,6 +33,10 @@ Early development. Working today:
 
 See [ROADMAP.md](ROADMAP.md) for what comes next.
 
+## Fonts
+
+The neon theme bundles Rajdhani, Barlow and Share Tech Mono under the SIL Open Font License (see `src/renderer/fonts/OFL-*.txt`). The theme is original styling for this app.
+
 ## Install
 
 Build the Windows installer, then double-click it:

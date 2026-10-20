@@ -6,6 +6,8 @@
         content="default-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net https://mcasset.cloud https://project-crafting.github.io data:; style-src 'self'; script-src 'self'" />
   <title>Self-Host MC</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="cyberpunk.css" />
+  <script src="theme-boot.js"></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -21,6 +23,7 @@
     <ul id="server-list" class="server-list"></ul>
     <div class="sidebar-foot">
       <div id="playit-pill" class="playit-pill"></div>
+      <button id="app-settings-btn" class="btn btn-ghost btn-block app-settings-btn" type="button">⚙ App settings</button>
     </div>
   </aside>
 
@@ -475,6 +478,66 @@
       </div>
     </section>
   </main>
+
+  <!-- Settings for the app itself -->
+  <div id="app-settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="app-settings-title">
+    <form id="app-settings-form" class="modal-box app-settings-box">
+      <h2 id="app-settings-title">App settings</h2>
+      <fieldset class="settings-group">
+        <legend>Look</legend>
+        <label>Theme
+          <select id="as-theme">
+            <option value="cyberpunk">Neon (cyberpunk)</option>
+            <option value="classic">Classic (calm dark)</option>
+          </select>
+        </label>
+        <div class="accent-row" role="radiogroup" aria-label="Accent colour">
+          <span class="muted small">Accent colour</span>
+          <label class="accent-swatch yellow"><input type="radio" name="as-accent" value="yellow" /><span></span>Yellow</label>
+          <label class="accent-swatch cyan"><input type="radio" name="as-accent" value="cyan" /><span></span>Cyan</label>
+          <label class="accent-swatch magenta"><input type="radio" name="as-accent" value="magenta" /><span></span>Magenta</label>
+          <label class="accent-swatch green"><input type="radio" name="as-accent" value="green" /><span></span>Green</label>
+        </div>
+        <label class="checkbox"><input id="as-motion" type="checkbox" /> Animations (glow, flicker and glitch effects)</label>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend>New servers</legend>
+        <label>Default memory
+          <select id="as-memory"></select>
+        </label>
+        <label class="checkbox"><input id="as-whitelist" type="checkbox" /> Turn the whitelist on for new servers</label>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend>Windows</legend>
+        <label class="checkbox"><input id="as-startup" type="checkbox" /> Open Self-Host MC when Windows starts</label>
+        <p class="muted small">Only works in the installed app.</p>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend>Help</legend>
+        <button id="as-tour" class="btn" type="button">Show the tutorial again</button>
+      </fieldset>
+      <div class="row end">
+        <button id="as-cancel" class="btn btn-ghost" type="button">Cancel</button>
+        <button class="btn btn-primary" type="submit">Save</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- First-run tutorial -->
+  <div id="tour" class="tour hidden" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+    <div id="tour-spot" class="tour-spot hidden"></div>
+    <div id="tour-box" class="tour-box">
+      <div id="tour-count" class="tour-count"></div>
+      <h2 id="tour-title"></h2>
+      <p id="tour-text"></p>
+      <div class="row">
+        <button id="tour-skip" class="btn btn-ghost" type="button">Skip tutorial</button>
+        <span class="spacer"></span>
+        <button id="tour-back" class="btn" type="button">Back</button>
+        <button id="tour-next" class="btn btn-primary" type="button">Next</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Right-click menu for a player (built when it opens) -->
   <div id="player-menu" class="ctx-menu hidden" role="menu"></div>

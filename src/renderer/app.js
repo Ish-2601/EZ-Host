@@ -154,6 +154,8 @@ function setupRamSlider(input, label, value, hint) {
 }
 
 function recommendedRam(modCount = 100) {
+  // The host's own default from App settings wins.
+  if (state.app && state.app.defaultMemoryMb) return state.app.defaultMemoryMb;
   const want = modCount > 250 ? 8192 : modCount > 120 ? 6144 : 4096;
   return Math.min(want, Math.floor((state.totalMemoryMb * 0.5) / 512) * 512 || 4096);
 }
@@ -1846,6 +1848,8 @@ function wire() {
   };
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (!$('tour').classList.contains('hidden')) endTour();
+      $('app-settings-modal').classList.add('hidden');
       $('eula-modal').classList.add('hidden');
       $('rename-modal').classList.add('hidden');
       $('host-modal').classList.add('hidden');
@@ -2195,8 +2199,166 @@ function wire() {
   api.onServersChanged(() => refreshServers());
 }
 
+// ---------- app settings and appearance ----------
+
+function applyAppearance(app) {
+  const root = document.documentElement;
+  root.dataset.theme = app.theme;
+  root.dataset.accent = app.accent;
+  root.dataset.motion = app.motion ? 'on' : 'off';
+  try {
+    localStorage.setItem('appearance', JSON.stringify({ theme: app.theme, accent: app.accent, motion: app.motion }));
+  } catch {
+    // the saved settings still apply on the next start
+  }
+}
+
+function openAppSettings() {
+  const app = state.app;
+  $('as-theme').value = app.theme;
+  document.querySelectorAll('input[name="as-accent"]').forEach((r) => (r.checked = r.value === app.accent));
+  $('as-motion').checked = app.motion;
+  $('as-whitelist').checked = app.defaultWhitelist;
+  $('as-startup').checked = app.startWithWindows;
+  const max = Math.max(4096, Math.floor((state.totalMemoryMb * 0.75) / 1024) * 1024);
+  const options = [el('option', { value: '0' }, 'Suggest based on the modpack')];
+  for (let mb = 2048; mb <= max; mb += 1024) options.push(el('option', { value: String(mb) }, formatMb(mb)));
+  fill($('as-memory'), options);
+  $('as-memory').value = String(app.defaultMemoryMb || 0);
+  state.appBefore = { ...app };
+  $('app-settings-modal').classList.remove('hidden');
+  $('as-theme').focus();
+}
+
+function previewAppearance() {
+  const accent = (document.querySelector('input[name="as-accent"]:checked') || {}).value || state.app.accent;
+  applyAppearance({ theme: $('as-theme').value, accent, motion: $('as-motion').checked });
+}
+
+async function saveAppSettings(event) {
+  event.preventDefault();
+  const accent = (document.querySelector('input[name="as-accent"]:checked') || {}).value || state.app.accent;
+  const next = await attempt(() => api.setAppSettings({
+    theme: $('as-theme').value,
+    accent,
+    motion: $('as-motion').checked,
+    defaultMemoryMb: Number($('as-memory').value) || null,
+    defaultWhitelist: $('as-whitelist').checked,
+    startWithWindows: $('as-startup').checked,
+  }));
+  if (!next) return;
+  state.app = next;
+  applyAppearance(next);
+  $('app-settings-modal').classList.add('hidden');
+  toast('Settings saved');
+}
+
+function cancelAppSettings() {
+  if (state.appBefore) applyAppearance(state.appBefore);
+  $('app-settings-modal').classList.add('hidden');
+}
+
+// ---------- tutorial ----------
+
+const TOUR = [
+  { title: 'Welcome to Self-Host MC', text: 'This quick tour shows where everything is. It takes about a minute, and you can skip it any time.' },
+  { target: '#new-server-btn', title: 'Make a server', text: 'Start here. Pick a CurseForge profile you already play (your game will match the server), a Modrinth modpack, a modpack file, or plain Minecraft. Java and everything else installs by itself.' },
+  { target: '#server-list', title: 'Your servers', text: 'Every server you make shows up here. Click one to open it. Right-click for quick actions: rename, settings, open its folder, or delete it.' },
+  { target: '#status-card', title: 'Start and stop', text: 'The big button starts or stops the server. The bar shows how far startup has got, and this card tells you in plain words if anything goes wrong.', needsServer: true },
+  { target: '#share-card', title: 'Let friends join', text: 'Connect playit.gg once and each server gets its own online address. Copy it and send it to your friends; they paste it into Multiplayer, Add Server.', needsServer: true },
+  { target: '.tabs', title: 'Everything else', text: 'Players: who can join, OP, inventories. Mods: turn mods on or off and see problems. World: the map and pregenerating. Tools: performance tips and live health. Settings: this server\'s options and icon.', needsServer: true },
+  { target: '#app-settings-btn', title: 'Make it yours', text: 'Change the look, accent colour and animations, set defaults for new servers, or watch this tutorial again.' },
+  { title: "You're ready", text: 'Make a server, press Start, and share the address. Have fun!' },
+];
+
+function startTour() {
+  state.tourStep = 0;
+  $('tour').classList.remove('hidden');
+  showTourStep();
+}
+
+function visibleTarget(step) {
+  if (!step.target) return null;
+  const node = document.querySelector(step.target);
+  if (!node) return null;
+  const rect = node.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 && node.offsetParent !== null ? node : null;
+}
+
+function showTourStep() {
+  // Skip server-only steps when no server is open yet.
+  while (TOUR[state.tourStep] && TOUR[state.tourStep].needsServer && !visibleTarget(TOUR[state.tourStep])) state.tourStep++;
+  const step = TOUR[state.tourStep];
+  if (!step) return endTour();
+  const steps = TOUR.filter((t) => !t.needsServer || visibleTarget(t));
+  $('tour-count').textContent = `STEP ${steps.indexOf(step) + 1} OF ${steps.length}`;
+  $('tour-title').textContent = step.title;
+  $('tour-text').textContent = step.text;
+  $('tour-back').disabled = state.tourStep === 0;
+  $('tour-next').textContent = state.tourStep === TOUR.length - 1 ? 'Finish' : 'Next';
+  const target = visibleTarget(step);
+  const spot = $('tour-spot');
+  const box = $('tour-box');
+  $('tour').classList.toggle('no-spot', !target);
+  spot.classList.toggle('hidden', !target);
+  if (target) {
+    target.scrollIntoView({ block: 'nearest' });
+    const r = target.getBoundingClientRect();
+    const pad = 6;
+    Object.assign(spot.style, { left: `${r.left - pad}px`, top: `${r.top - pad}px`, width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px` });
+    // Put the box beside the highlight, keeping it on screen.
+    const bw = box.offsetWidth || 380;
+    const bh = box.offsetHeight || 200;
+    let left = r.right + 18;
+    let top = r.top;
+    if (left + bw > window.innerWidth - 12) left = Math.max(12, r.left - bw - 18);
+    if (left < 12 || (r.left - bw - 18 < 12 && r.right + 18 + bw > window.innerWidth)) {
+      left = Math.min(window.innerWidth - bw - 12, Math.max(12, r.left));
+      top = r.bottom + 14 + bh > window.innerHeight ? r.top - bh - 14 : r.bottom + 14;
+    }
+    Object.assign(box.style, { left: `${left}px`, top: `${Math.max(12, Math.min(top, window.innerHeight - bh - 12))}px`, transform: '' });
+  } else {
+    Object.assign(box.style, { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' });
+  }
+  $('tour-next').focus();
+}
+
+async function endTour() {
+  $('tour').classList.add('hidden');
+  if (state.app && !state.app.tutorialDone) {
+    const next = await attempt(() => api.setAppSettings({ tutorialDone: true }));
+    if (next) state.app = next;
+  }
+}
+
 async function init() {
   wire();
+  $('app-settings-btn').onclick = openAppSettings;
+  $('app-settings-form').onsubmit = saveAppSettings;
+  $('as-cancel').onclick = cancelAppSettings;
+  $('as-theme').onchange = previewAppearance;
+  $('as-motion').onchange = previewAppearance;
+  document.querySelectorAll('input[name="as-accent"]').forEach((r) => (r.onchange = previewAppearance));
+  $('as-tour').onclick = () => {
+    cancelAppSettings();
+    startTour();
+  };
+  $('tour-skip').onclick = endTour;
+  $('tour-next').onclick = () => {
+    if (state.tourStep >= TOUR.length - 1) return endTour();
+    state.tourStep++;
+    showTourStep();
+  };
+  $('tour-back').onclick = () => {
+    // Step back over server-only steps that are not on screen.
+    do state.tourStep--; while (state.tourStep > 0 && TOUR[state.tourStep].needsServer && !visibleTarget(TOUR[state.tourStep]));
+    showTourStep();
+  };
+  window.addEventListener('resize', () => {
+    if (!$('tour').classList.contains('hidden')) showTourStep();
+  });
+  state.app = (await attempt(() => api.appSettings())) || { theme: 'cyberpunk', accent: 'yellow', motion: true, tutorialDone: true };
+  applyAppearance(state.app);
   setInterval(() => {
     const s = current();
     if (s && s.status === 'starting') renderStartup(s.id);
@@ -2207,8 +2369,10 @@ async function init() {
   state.playit = (await attempt(() => api.playitStatus())) || state.playit;
   renderPlayitPill();
   await refreshServers();
-  if (state.servers.length) openServer(state.servers[0].id);
+  if (state.servers.length) await openServer(state.servers[0].id);
   else showView('empty');
+  // First run: a short tour, which can be skipped.
+  if (!state.app.tutorialDone) setTimeout(startTour, 600);
 }
 
 init();

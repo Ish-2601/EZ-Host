@@ -90,6 +90,8 @@ contextBridge.exposeInMainWorld('api', {
   getPlayers: invoke('servers:players'),
   onPlayit: subscribe('playit:status'),
   onPlayers: subscribe('server:players'),
+  appSettings: invoke('settings:app'),
+  setAppSettings: invoke('settings:setApp'),
   modsOverview: invoke('mods:overview'),
   setModEnabled: invoke('mods:setEnabled'),
   perfAdvice: invoke('perf:advice'),

@@ -1196,6 +1196,39 @@ class ServerManager extends EventEmitter {
     return next;
   }
 
+  /** Preferences for the app itself (look, defaults for new servers, tutorial). */
+  appSettings() {
+    const saved = this.readSettings().app || {};
+    return {
+      theme: saved.theme === 'classic' ? 'classic' : 'cyberpunk',
+      accent: ['yellow', 'cyan', 'magenta', 'green'].includes(saved.accent) ? saved.accent : 'yellow',
+      motion: saved.motion !== false,
+      defaultMemoryMb: Number(saved.defaultMemoryMb) || null,
+      defaultWhitelist: saved.defaultWhitelist === true,
+      startWithWindows: saved.startWithWindows === true,
+      tutorialDone: saved.tutorialDone === true,
+    };
+  }
+
+  async setAppSettings(patch) {
+    const current = this.appSettings();
+    const next = { ...current };
+    if (patch.theme === 'classic' || patch.theme === 'cyberpunk') next.theme = patch.theme;
+    if (['yellow', 'cyan', 'magenta', 'green'].includes(patch.accent)) next.accent = patch.accent;
+    if (typeof patch.motion === 'boolean') next.motion = patch.motion;
+    if (patch.defaultMemoryMb === null || patch.defaultMemoryMb === 0) next.defaultMemoryMb = null;
+    else if (patch.defaultMemoryMb !== undefined) {
+      const mb = Math.round(Number(patch.defaultMemoryMb) / 512) * 512;
+      if (!(mb >= 1024 && mb <= 65536)) throw new Error('Invalid memory amount');
+      next.defaultMemoryMb = mb;
+    }
+    if (typeof patch.defaultWhitelist === 'boolean') next.defaultWhitelist = patch.defaultWhitelist;
+    if (typeof patch.startWithWindows === 'boolean') next.startWithWindows = patch.startWithWindows;
+    if (typeof patch.tutorialDone === 'boolean') next.tutorialDone = patch.tutorialDone;
+    await this.updateSettings({ app: next });
+    return next;
+  }
+
   /** The host's Minecraft name: saved in settings, or guessed from the official launcher. */
   hostName() {
     const saved = this.readSettings().hostName;
@@ -1329,7 +1362,9 @@ class ServerManager extends EventEmitter {
     // New servers start with the list off (Minecraft 26.3+ would turn it on);
     // the host is put on the list anyway, so turning it on later never locks them out.
     const isNew = !props['white-list'];
-    if (isNew) await this.writeProperties(id, { 'white-list': 'false', 'enforce-whitelist': 'false' });
+    // New servers follow the app setting (off unless the host changed it).
+    const listOn = String(this.appSettings().defaultWhitelist);
+    if (isNew) await this.writeProperties(id, { 'white-list': listOn, 'enforce-whitelist': listOn });
     const addHost = async () => {
       if (!host || this.readWhitelist(id).some((p) => p.name.toLowerCase() === host.toLowerCase())) return;
       try {

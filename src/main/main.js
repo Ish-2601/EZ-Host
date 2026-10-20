@@ -57,6 +57,7 @@ const CHANNEL_PERMISSION = {
   'servers:exportStatusPage': 'server', 'system:copy': 'server', 'system:totalMemoryMb': 'server',
   'settings:notifications': 'settings', 'settings:setNotifications': 'settings',
   'minecraft:versions': 'server',
+  'settings:app': 'server', 'settings:setApp': 'settings',
   'mods:overview': 'server', 'mods:setEnabled': 'settings',
   'perf:advice': 'server', 'perf:applySettings': 'settings', 'perf:installMods': 'settings', 'servers:setMemory': 'settings',
   'servers:icon': 'server', 'servers:chooseIcon': 'settings', 'servers:removeIcon': 'settings',
@@ -409,6 +410,14 @@ function registerIpc() {
   handle('whitelist:enable', (id, on) => manager.setWhitelistEnabled(id, Boolean(on)));
   handle('whitelist:deny', (id, name) => manager.denyJoiner(id, name));
   handle('settings:hostName', () => manager.hostName());
+  handle('settings:app', () => manager.appSettings());
+  handle('settings:setApp', async (patch) => {
+    const next = await manager.setAppSettings(patch || {});
+    if (typeof (patch || {}).startWithWindows === 'boolean' && app.isPackaged) {
+      app.setLoginItemSettings({ openAtLogin: next.startWithWindows });
+    }
+    return next;
+  });
   handle('settings:setHostName', (name) => manager.setHostName(name));
   handle('map:dimensions', (id) => manager.mapDimensions(id));
   handle('map:regions', (id, dim) => manager.mapRegions(id, dim));
