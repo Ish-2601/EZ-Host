@@ -96,7 +96,7 @@ async function profileWorkshopIds(steamId, which) {
   for (let page = 1; page <= 5; page++) {
     const query = which === 'favorites' ? `browsefilter=myfavorites&appid=${APP_ID}` : `section=collections&appid=${APP_ID}`;
     const res = await fetch(`https://steamcommunity.com/profiles/${steamId}/myworkshopfiles/?${query}&p=${page}&numperpage=30`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Self-Host-MC' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) EZ-Host' },
     });
     const html = await res.text();
     if (/profile_private_info|This profile is private/i.test(html)) throw new PrivateProfileError('private');

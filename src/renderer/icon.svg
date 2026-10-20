@@ -1,26 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- EZ Host: a wireframe globe (friends anywhere) with a link arc to your PC. -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2b3340"/>
-      <stop offset="1" stop-color="#171b22"/>
-    </linearGradient>
+    <radialGradient id="bg" cx="0.5" cy="0.45" r="0.75">
+      <stop offset="0" stop-color="#1a1d22"/>
+      <stop offset="1" stop-color="#07080a"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff7a1a" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ff7a1a" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="globe"><circle cx="256" cy="262" r="150"/></clipPath>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <!-- Grass block -->
-  <polygon points="256,96 408,180 256,264 104,180" fill="#5cc061"/>
-  <polygon points="104,180 256,264 256,432 104,348" fill="#8a5a36"/>
-  <polygon points="408,180 256,264 256,432 408,348" fill="#6e4628"/>
-  <polygon points="104,180 256,264 256,300 104,216" fill="#4caf50"/>
-  <polygon points="408,180 256,264 256,300 408,216" fill="#3d9142"/>
-  <!-- Grass drips -->
-  <polygon points="140,212 162,224 162,248 140,236" fill="#4caf50"/>
-  <polygon points="200,244 222,256 222,274 200,262" fill="#4caf50"/>
-  <polygon points="372,212 350,224 350,252 372,240" fill="#3d9142"/>
-  <polygon points="312,244 290,256 290,270 312,258" fill="#3d9142"/>
-  <!-- Online signal -->
-  <circle cx="392" cy="392" r="72" fill="#14161a"/>
-  <circle cx="392" cy="392" r="58" fill="#4caf50"/>
-  <path d="M362 392a30 30 0 0 1 60 0" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
-  <path d="M378 400a14 14 0 0 1 28 0" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
-  <circle cx="392" cy="414" r="8" fill="#fff"/>
+  <rect width="512" height="512" rx="104" fill="url(#bg)"/>
+  <!-- HUD corner brackets -->
+  <g fill="none" stroke="#8b929c" stroke-width="10" stroke-linecap="square">
+    <path d="M70 128V70h58"/>
+    <path d="M384 70h58v58"/>
+    <path d="M442 384v58h-58"/>
+    <path d="M128 442H70v-58"/>
+  </g>
+  <!-- Globe wireframe -->
+  <g fill="none" stroke="#e6e8eb" stroke-width="9">
+    <circle cx="256" cy="262" r="150"/>
+    <g clip-path="url(#globe)" stroke-width="6" stroke="#b9bec6">
+      <ellipse cx="256" cy="262" rx="62" ry="150"/>
+      <ellipse cx="256" cy="262" rx="118" ry="150"/>
+      <path d="M256 112v300"/>
+      <path d="M106 262h300"/>
+      <path d="M118 196c88 26 188 26 276 0"/>
+      <path d="M118 328c88-26 188-26 276 0"/>
+    </g>
+  </g>
+  <!-- Link arc between two hot spots -->
+  <path d="M176 318C190 200 300 150 352 214" fill="none" stroke="#ff7a1a" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="176" cy="318" r="40" fill="url(#glow)"/>
+  <circle cx="352" cy="214" r="40" fill="url(#glow)"/>
+  <circle cx="176" cy="318" r="17" fill="#ff7a1a"/>
+  <circle cx="352" cy="214" r="17" fill="#ffffff"/>
+  <circle cx="352" cy="214" r="8" fill="#ff7a1a"/>
 </svg>

@@ -8,7 +8,11 @@
     // first run or storage unavailable
   }
   const root = document.documentElement;
-  root.dataset.theme = saved.theme || 'cyberpunk';
-  root.dataset.accent = saved.accent || 'yellow';
+  root.dataset.theme = saved.theme || 'hud';
+  root.dataset.accent = saved.accent || 'orange';
+  root.dataset.panels = saved.panels || 'brackets';
+  root.dataset.bg = saved.background || 'globe';
+  root.dataset.density = saved.density || 'comfortable';
+  root.dataset.strip = saved.strip === false ? 'off' : 'on';
   root.dataset.motion = saved.motion === false ? 'off' : 'on';
 })();

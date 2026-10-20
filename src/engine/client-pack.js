@@ -107,7 +107,7 @@ async function buildCurseForgeZip({ name, version, minecraft, loader, loaderVers
     manifestVersion: 1,
     name,
     version: version || '1.0.0',
-    author: 'Self-Host MC',
+    author: 'EZ Host',
     files: [],
     overrides: 'overrides',
   };

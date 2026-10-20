@@ -212,7 +212,7 @@ const GAME_TEXT = {
   minecraft: {
     button: '+ New Minecraft server',
     title: 'Host a modded Minecraft server',
-    text: 'Pick a modpack or one of your CurseForge profiles. Self-Host MC installs everything it needs, runs the server on this PC, and gives you an address your friends can join from anywhere.',
+    text: 'Pick a modpack or one of your CurseForge profiles. EZ Host installs everything it needs, runs the server on this PC, and gives you an address your friends can join from anywhere.',
   },
   zomboid: {
     button: '+ New Zomboid server',
@@ -244,6 +244,7 @@ function setGame(game, { route = true } = {}) {
 }
 
 function renderServerList() {
+  renderStrip();
   for (const g of ['minecraft', 'zomboid']) {
     const n = state.servers.filter((s) => gameOf(s) === g).length;
     $(`count-${g}`).textContent = n ? String(n) : '';
@@ -265,6 +266,32 @@ function renderServerList() {
       )
     )
   );
+}
+
+/** HUD status strip: one square per server (click to open), totals, and a clock. */
+function renderStrip() {
+  const strip = $('hud-strip');
+  if (!strip || document.documentElement.dataset.strip !== 'on') return;
+  const running = state.servers.filter((s) => s.status === 'running');
+  const players = running.reduce((n, s) => n + ((state.players[s.id] || []).length), 0);
+  const t = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  fill(strip,
+    el('strong', {}, 'EZH'),
+    el('span', { class: 'sep' }, '|'),
+    el('div', { class: 'cells' }, state.servers.map((s) => el('button', {
+      class: `cell ${s.installError || s.crashed ? 'error' : s.status}${s.id === state.selectedId ? ' active' : ''}`,
+      type: 'button',
+      title: `${s.name} · ${statusWord(s)}`,
+      onclick: () => openServer(s.id),
+    }))),
+    el('span', {}, `SRV ${pad(state.servers.length)}`),
+    el('span', {}, 'ONLINE ', el('strong', { class: running.length ? 'live' : '' }, pad(running.length))),
+    el('span', {}, 'PLAYERS ', el('strong', {}, pad(players))),
+    el('span', {}, `LINK ${state.playit.linked ? (state.playit.state === 'running' ? 'UP' : 'READY') : 'OFF'}`),
+    el('span', { class: 'spacer' }),
+    el('span', {}, `${t.getFullYear()}.${pad(t.getMonth() + 1)}.${pad(t.getDate())}`),
+    el('strong', {}, `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`));
 }
 
 function renderPlayitPill() {
@@ -911,7 +938,7 @@ function renderStatus(s) {
     const f = s.lastFailure;
     const fixed = f && f.mods ? f.mods.filter((m) => m.clientOnly).map((m) => m.name) : [];
     help = fixed.length
-      ? `${fixed.join(', ')} only work${fixed.length === 1 ? 's' : ''} in the game, not on a server, so Self-Host MC turned ${fixed.length === 1 ? 'it' : 'them'} off and is trying again. See the Mods tab.`
+      ? `${fixed.join(', ')} only work${fixed.length === 1 ? 's' : ''} in the game, not on a server, so EZ Host turned ${fixed.length === 1 ? 'it' : 'them'} off and is trying again. See the Mods tab.`
       : f && f.summary ? f.summary : 'The server stopped by itself. The Console tab shows what went wrong.';
   } else if (!s.eulaAccepted) {
     help = 'Ready for its first start. You will be asked to accept the Minecraft EULA.';
@@ -1055,13 +1082,13 @@ function renderOnlineBox() {
   if (p.state === 'linking') {
     content = el('div', { class: 'notice' },
       el('strong', {}, 'Finish in your browser'),
-      el('p', {}, 'Sign in or make a free playit.gg account, then approve Self-Host MC. This page updates by itself.'),
+      el('p', {}, 'Sign in or make a free playit.gg account, then approve EZ Host. This page updates by itself.'),
       p.claimUrl ? el('a', { href: p.claimUrl, target: '_blank', rel: 'noreferrer' }, 'Open the approval page again') : null
     );
   } else if (!p.linked) {
     content = el('div', { class: 'notice' },
       el('strong', {}, 'Let friends join from anywhere'),
-      el('p', {}, 'Self-Host MC uses playit.gg, a free service, to give each server its own online address. No router settings needed. You link it once, in your browser.'),
+      el('p', {}, 'EZ Host uses playit.gg, a free service, to give each server its own online address. No router settings needed. You link it once, in your browser.'),
       p.message ? el('p', { class: 'small' }, p.message) : null,
       el('button', { class: 'btn btn-primary', onclick: () => attempt(() => api.playitLink()) }, 'Connect playit.gg')
     );
@@ -1743,6 +1770,8 @@ const ZbMap = {
 
   async refresh() {
     const id = state.selectedId;
+    // Left the server or the Map tab: stop refreshing.
+    if (!id || !current() || current().game !== 'zomboid' || $('tab-world').classList.contains('hidden') || $('view-server').classList.contains('hidden')) return this.close();
     const list = await attempt(() => api.zomboidPositions(id));
     if (!list || id !== state.selectedId) return;
     this.players = list;
@@ -3283,13 +3312,20 @@ function wire() {
 
 // ---------- app settings and appearance ----------
 
+const LOOK_KEYS = ['theme', 'accent', 'panels', 'background', 'density', 'strip', 'motion'];
+
 function applyAppearance(app) {
   const root = document.documentElement;
   root.dataset.theme = app.theme;
   root.dataset.accent = app.accent;
+  root.dataset.panels = app.panels || 'brackets';
+  root.dataset.bg = app.background || 'globe';
+  root.dataset.density = app.density || 'comfortable';
+  root.dataset.strip = app.strip === false ? 'off' : 'on';
   root.dataset.motion = app.motion ? 'on' : 'off';
+  renderStrip();
   try {
-    localStorage.setItem('appearance', JSON.stringify({ theme: app.theme, accent: app.accent, motion: app.motion }));
+    localStorage.setItem('appearance', JSON.stringify(Object.fromEntries(LOOK_KEYS.map((k) => [k, app[k]]))));
   } catch {
     // the saved settings still apply on the next start
   }
@@ -3300,6 +3336,10 @@ function openAppSettings() {
   $('as-theme').value = app.theme;
   document.querySelectorAll('input[name="as-accent"]').forEach((r) => (r.checked = r.value === app.accent));
   $('as-motion').checked = app.motion;
+  $('as-panels').value = app.panels || 'brackets';
+  $('as-background').value = app.background || 'globe';
+  $('as-density').value = app.density || 'comfortable';
+  $('as-strip').checked = app.strip !== false;
   $('as-whitelist').checked = app.defaultWhitelist;
   $('as-startup').checked = app.startWithWindows;
   const max = Math.max(4096, Math.floor((state.totalMemoryMb * 0.75) / 1024) * 1024);
@@ -3314,7 +3354,17 @@ function openAppSettings() {
 
 function previewAppearance() {
   const accent = (document.querySelector('input[name="as-accent"]:checked') || {}).value || state.app.accent;
-  applyAppearance({ theme: $('as-theme').value, accent, motion: $('as-motion').checked });
+  applyAppearance({ theme: $('as-theme').value, accent, ...lookFromForm() });
+}
+
+function lookFromForm() {
+  return {
+    panels: $('as-panels').value,
+    background: $('as-background').value,
+    density: $('as-density').value,
+    strip: $('as-strip').checked,
+    motion: $('as-motion').checked,
+  };
 }
 
 async function saveAppSettings(event) {
@@ -3323,7 +3373,7 @@ async function saveAppSettings(event) {
   const next = await attempt(() => api.setAppSettings({
     theme: $('as-theme').value,
     accent,
-    motion: $('as-motion').checked,
+    ...lookFromForm(),
     defaultMemoryMb: Number($('as-memory').value) || null,
     defaultWhitelist: $('as-whitelist').checked,
     startWithWindows: $('as-startup').checked,
@@ -3343,13 +3393,14 @@ function cancelAppSettings() {
 // ---------- tutorial ----------
 
 const TOUR = [
-  { title: 'Welcome to Self-Host MC', text: 'This quick tour shows where everything is. It takes about a minute, and you can skip it any time.' },
-  { target: '#new-server-btn', title: 'Make a server', text: 'Start here. Pick a CurseForge profile you already play (your game will match the server), a Modrinth modpack, a modpack file, or plain Minecraft. Java and everything else installs by itself.' },
+  { title: 'Welcome to EZ Host', text: 'This quick tour shows where everything is. It takes about a minute, and you can skip it any time.' },
+  { target: '.game-switch', title: 'Pick a game', text: 'Minecraft and Project Zomboid each have their own section with their own servers. Switch between them here.' },
+  { target: '#new-server-btn', title: 'Make a server', text: 'Start here. For Minecraft, pick a profile you already play, a Modrinth modpack or plain Minecraft. For Zomboid, pick a world preset and your Workshop mods. Everything installs by itself.' },
   { target: '#server-list', title: 'Your servers', text: 'Every server you make shows up here. Click one to open it. Right-click for quick actions: rename, settings, open its folder, or delete it.' },
   { target: '#status-card', title: 'Start and stop', text: 'The big button starts or stops the server. The bar shows how far startup has got, and this card tells you in plain words if anything goes wrong.', needsServer: true },
   { target: '#share-card', title: 'Let friends join', text: 'Connect playit.gg once and each server gets its own online address. Copy it and send it to your friends; they paste it into Multiplayer, Add Server.', needsServer: true },
   { target: '.tabs', title: 'Everything else', text: 'Players: who can join, OP, inventories. Mods: turn mods on or off and see problems. World: the map and pregenerating. Tools: performance tips and live health. Settings: this server\'s options and icon.', needsServer: true },
-  { target: '#app-settings-btn', title: 'Make it yours', text: 'Change the look, accent colour and animations, set defaults for new servers, or watch this tutorial again.' },
+  { target: '#app-settings-btn', title: 'Make it yours', text: 'Change the theme, accent colour, panels, background, spacing and the status strip, set defaults for new servers, or watch this tutorial again.' },
   { title: "You're ready", text: 'Make a server, press Start, and share the address. Have fun!' },
 ];
 
@@ -3420,6 +3471,8 @@ async function init() {
   $('as-cancel').onclick = cancelAppSettings;
   $('as-theme').onchange = previewAppearance;
   $('as-motion').onchange = previewAppearance;
+  for (const id of ['as-panels', 'as-background', 'as-density', 'as-strip']) $(id).onchange = previewAppearance;
+  setInterval(renderStrip, 1000);
   document.querySelectorAll('input[name="as-accent"]').forEach((r) => (r.onchange = previewAppearance));
   $('as-tour').onclick = () => {
     cancelAppSettings();
@@ -3439,7 +3492,7 @@ async function init() {
   window.addEventListener('resize', () => {
     if (!$('tour').classList.contains('hidden')) showTourStep();
   });
-  state.app = (await attempt(() => api.appSettings())) || { theme: 'cyberpunk', accent: 'yellow', motion: true, tutorialDone: true };
+  state.app = (await attempt(() => api.appSettings())) || { theme: 'hud', accent: 'orange', motion: true, tutorialDone: true };
   applyAppearance(state.app);
   setInterval(() => {
     const s = current();

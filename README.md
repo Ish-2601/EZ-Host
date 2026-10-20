@@ -1,86 +1,124 @@
-# Self-Host MC
+<p align="center">
+  <img src="src/renderer/icon.svg" width="120" alt="EZ Host logo" />
+</p>
 
-A free desktop app for hosting a modded Minecraft server on your own PC so friends can join, even when you are not in game.
+<h1 align="center">EZ Host</h1>
 
-Pick a modpack from Modrinth (or import a `.mrpack` file), and the app downloads the server-side mods, installs the right Java version and mod loader, and runs the server as a real dedicated server with a live console.
+<p align="center">
+  <b>Host Minecraft and Project Zomboid servers on your own PC, so friends can join from anywhere.</b><br />
+  Free. No commands, no router settings, no monthly server bill.
+</p>
 
-## Status
+<p align="center">
+  <a href="https://github.com/Ish-2601/Self-Host-MC/releases/latest"><img src="https://img.shields.io/badge/Download%20for%20Windows-EZ%20Host%20installer-ff7a1a?style=for-the-badge&logo=windows&logoColor=white" alt="Download EZ Host for Windows" /></a>
+</p>
 
-Early development. Working today:
+<p align="center">
+  <img src="docs/screenshots/server.png" width="860" alt="EZ Host running a Minecraft server" />
+</p>
 
-- Search Modrinth for server-ready modpacks and pick a version
-- Import a `.mrpack` file from disk
-- Server-side mod download with hash checks (client-only mods are skipped)
-- Automatic Java install (Eclipse Temurin, picked from Mojang's version metadata)
-- Automatic loader install: Fabric, Quilt, Forge, NeoForge, or vanilla
-- Start, stop, and a live console you can type commands into
-- Basic settings: name, RAM, MOTD, max players, port, difficulty
-- Host a server from a CurseForge or Prism Launcher profile on this PC, so the server matches the game you play
-- "How to join" screen: server addresses with copy buttons, the exact Minecraft/loader/mod versions players need, and in-game steps
-- Check any CurseForge/Prism profile against a server (wrong loader version, missing mods)
-- Export a server's client pack as a CurseForge-importable .zip, or as a .mrpack
-- Client-only mods are left off the server, unless another mod requires them; Java is picked to satisfy both Minecraft and the mods
-- Online address through playit.gg, so friends on other internet connections can join (link once in your browser)
-- Windows installer with desktop and Start menu shortcuts
-- Right-click a server to open, rename, change settings, open its folder or delete it
-- Plain Minecraft (vanilla) servers
-- A separate port and online address for each server
-- Pregenerate the world with Chunky (added automatically), with live progress
-- Players: heads, hearts, hunger, inventory and ender chest; heal, feed, give, remove items, game mode, XP, OP, kick
-- Whitelist switch on the Players tab (off by default), you are added automatically, and a "Trying to join" list with Approve/Deny
-- Right-click a player: OP, teleport, game mode, heal, feed, kick, ban, kill; OPs get a crown
-- World map rendered from the save, terrain or biomes with structure markers, live player heads, auto-refresh; select chunks to keep them loaded
+---
 
+## Download and install
 
-**Project Zomboid** (Windows): installs the dedicated server with SteamCMD, copies one of your in-game server configs (mods and world settings) or starts fresh, Workshop mods with on/off and requirement/incompatibility checks, players with admin/teleport/god mode/kick/ban, whitelist accounts with generated passwords, server settings, and an online address through playit.gg (UDP; playit asks for a verified email).
+1. Open the **[latest release](https://github.com/Ish-2601/Self-Host-MC/releases/latest)**.
+2. Download **`EZ-Host-Setup-<version>.exe`**, the first file in the list.
+3. Double-click it and follow the steps. EZ Host gets a desktop shortcut and a Start menu entry.
 
-See [ROADMAP.md](ROADMAP.md) for what comes next.
+That's it. Java, mod loaders, the Zomboid dedicated server and everything else download by themselves the first time you need them.
 
-## Fonts
+> **"Windows protected your PC"?** The installer isn't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
 
-The neon theme bundles Rajdhani, Barlow and Share Tech Mono under the SIL Open Font License (see `src/renderer/fonts/OFL-*.txt`). The theme is original styling for this app.
+The release also has an **`EZ-Host-<version>-portable.zip`**. Unzip it anywhere and run `EZ Host.exe` if you'd rather not install anything.
 
-## Install
+## Quick start
 
-Build the Windows installer, then double-click it:
+1. Pick a game in the sidebar: **Minecraft** or **Project Zomboid**.
+2. Click **+ New server** and choose what to play:
+   - **Minecraft:** a CurseForge, Modrinth App or Prism profile you already play (the server matches your game), any Modrinth modpack, a `.mrpack` file, or plain Minecraft.
+   - **Project Zomboid:** a brand-new world with one of the game's presets, a copy of a server you host in-game, and your Steam Workshop collections.
+3. Press **Start server**.
+4. Click **Connect playit.gg** once (free) to get an online address. Send it to your friends and they join from anywhere.
 
-```bash
-npm install
-npm run dist
-```
+## Supported games
 
-This creates `dist/Self-Host-MC-Setup-0.1.0.exe`. It installs Self-Host MC for your Windows user, with a desktop shortcut and a Start menu entry. The installer is not code-signed yet, so Windows SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**.
+| Game | What you get |
+|---|---|
+| **Minecraft: Java Edition** | Fabric, Forge, NeoForge, Quilt, Paper and vanilla. Modrinth modpacks, `.mrpack` files and your launcher profiles, with client-only mods left out automatically. Whitelist, OP, player inventories, a live world map with chunk force-loading, world pregeneration, backups and schedules. |
+| **Project Zomboid** (Build 42) | A dedicated server installed through Steam (no login needed). World presets, every server option and world rule (including the ones your mods add), Steam Workshop mods and collections, whitelist accounts, an in-game map with players, item and vehicle spawning, skill XP and admin powers. |
 
-Server files, Java runtimes, and downloads are stored in `%APPDATA%\self-host-mc\data` and are kept when you uninstall.
+## Features
 
-## Develop
+- **One app for every server.** Each game has its own section, with its own servers, settings and tools.
+- **Friends join from anywhere.** Every server gets its own online address through [playit.gg](https://playit.gg). There's no port forwarding, and the app shows friends exactly what to type.
+- **Mods without the headache.** Turn mods on and off and see conflicts and missing requirements. Bad mods are switched off automatically if a server crashes.
+- **Players at a glance.** See who's online, where they are on the map, and edit them: give items (type any part of a name), heal, teleport, ban and more.
+- **It tells you what's wrong.** Startup progress, plain-language errors, and automatic retries for things like Steam hiccups.
+- **Backups and schedules.** Restore points, scheduled restarts with in-game warnings, and an automatic restart when a Zomboid Workshop mod updates.
+- **Make it yours.** Choose the HUD, Neon or Classic theme, then pick the accent colour, panel style, background, spacing and status strip.
 
-Requires Node.js 20+ on Windows.
+<p align="center">
+  <img src="docs/screenshots/zomboid-map.png" width="49%" alt="Project Zomboid map with players" />
+  <img src="docs/screenshots/zomboid-players.png" width="49%" alt="Editing a Project Zomboid player" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/settings.png" width="60%" alt="Look settings" />
+</p>
+
+## FAQ
+
+**Is it really free?**
+Yes. EZ Host is free and open source. playit.gg's free plan gives every server an address. Your friends still need to own the game.
+
+**Does my PC need to stay on?**
+Yes. The server runs on your PC, so friends can play while EZ Host is open and the server is started.
+
+**Where are my servers stored?**
+In `%APPDATA%\self-host-mc\data`. Uninstalling keeps them. The folder kept the app's old name so nothing was lost when it was renamed to EZ Host.
+
+**How much memory should I give a server?**
+EZ Host suggests an amount based on how many mods and players you have. A few mods need about 4 GB; big modpacks or Zomboid with hundreds of mods need 8 to 12 GB.
+
+**My friend can't connect.**
+Open the server's **Friends' setup** tab. It shows the exact address and port, the game version and the mods they need. For Minecraft, it can also check their CurseForge or Prism profile against the server.
+
+**Zomboid says playit.gg needs a verified email.**
+playit.gg only gives UDP addresses (which Zomboid uses) to accounts with a verified email. Verify it on playit.gg, then press Try again.
+
+## Build from source
+
+You need Node.js 20+ on Windows.
 
 ```bash
 npm install
 npm start
 ```
 
-## Engine smoke test
-
-The server engine has no Electron dependency, so it can be tested from the command line. This installs a pack into `.dev-data/` and launches it up to the EULA prompt:
+To build the installer (`dist/EZ-Host-Setup-<version>.exe`):
 
 ```bash
-npm run test:engine -- "Cobblemon Official Modpack [Fabric]"
+npm run dist
 ```
 
-To build a server from a CurseForge/Prism profile on this PC the same way:
+The server engine has no Electron dependency, so you can smoke-test it from the command line:
 
 ```bash
-node scripts/profile-smoke.js "<profile name>"
+npm run test:engine
 ```
 
-## Layout
+| Folder | What's in it |
+|---|---|
+| `src/engine/` | The server engine (plain Node): Minecraft installs, Java, mod loaders, processes, RCON, playit.gg, backups |
+| `src/games/zomboid/` | Project Zomboid: SteamCMD, server runner, settings, Workshop, map |
+| `src/main/` | Electron main process and the preload bridge |
+| `src/renderer/` | The UI (plain HTML, CSS and JS). The look is described in [DESIGN.md](DESIGN.md) |
+| `scripts/` | Smoke tests and the icon renderer |
 
-```
-src/engine/    Server engine (plain Node): Modrinth, .mrpack install, Java, loaders, process
-src/main/      Electron main process and preload bridge
-src/renderer/  UI (plain HTML/CSS/JS)
-scripts/       Dev scripts
-```
+See [ROADMAP.md](ROADMAP.md) for what comes next.
+
+## Licence and credits
+
+- EZ Host is released under the [MIT licence](LICENSE).
+- The logo and themes are original artwork for this app. The bundled fonts (Rajdhani, Barlow, Share Tech Mono) are under the SIL Open Font License; see `src/renderer/fonts/OFL-*.txt`.
+- Minecraft servers require you to accept the [Minecraft EULA](https://aka.ms/MinecraftEULA). The app asks before a server's first start.
+- EZ Host isn't affiliated with Mojang, Microsoft, The Indie Stone, Valve or playit.gg. Minecraft and Project Zomboid are trademarks of their owners.

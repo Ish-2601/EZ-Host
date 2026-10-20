@@ -401,6 +401,13 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 
 /* ---------- Per-game parts ---------- */
 html:not([data-game="zomboid"]) .zb-only { display: none !important; }
+/* Accent swatches for every theme's choices */
+.accent-row { flex-wrap: wrap; }
+.accent-swatch.orange span { background: #ff7a1a; }
+.accent-swatch.red span { background: #ff3d3d; }
+.accent-swatch.white span { background: #f1f3f5; }
+html:not([data-theme="hud"]) .hud-only-option { display: none; }
+html:not([data-theme="hud"]) .accent-swatch:is(.orange, .red, .white) { display: none; }
 /* Game sections */
 .game-switch { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 4px 0 12px; }
 .game-btn { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
@@ -479,3 +486,5 @@ textarea { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid
 .form .check-grid label { flex-direction: row; }
 .map-head h3 { white-space: nowrap; }
 #zb-rules-search { max-width: 320px; }
+
+.app-settings-box { overflow-x: hidden; }

@@ -4,9 +4,10 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net https://mcasset.cloud https://project-crafting.github.io https://steamuserimages-a.akamaihd.net https://images.steamusercontent.com data:; style-src 'self'; script-src 'self'" />
-  <title>Self-Host MC</title>
+  <title>EZ Host</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="cyberpunk.css" />
+  <link rel="stylesheet" href="hud.css" />
   <script src="theme-boot.js"></script>
 </head>
 <body>
@@ -14,8 +15,8 @@
     <div class="brand">
       <img class="brand-mark" src="icon.svg" alt="" />
       <div>
-        <div class="brand-name">Self-Host MC</div>
-        <div class="brand-sub">Your PC, your server</div>
+        <div class="brand-name">EZH</div>
+        <div class="brand-sub">EZ Host · game servers</div>
       </div>
     </div>
     <div class="game-switch" role="tablist" aria-label="Game">
@@ -32,12 +33,13 @@
   </aside>
 
   <main id="main" class="main">
+    <div id="hud-strip" class="hud-strip" aria-label="Server status strip"></div>
     <!-- First run -->
     <section id="view-empty" class="view hidden">
       <div class="empty">
         <img class="empty-icon" src="icon.svg" alt="" />
         <h1 id="empty-title">Host a modded Minecraft server</h1>
-        <p id="empty-text">Pick a modpack or one of your CurseForge profiles. Self-Host MC installs everything it needs, runs the server on this PC, and gives you an address your friends can join from anywhere.</p>
+        <p id="empty-text">Pick a modpack or one of your CurseForge profiles. EZ Host installs everything it needs, runs the server on this PC, and gives you an address your friends can join from anywhere.</p>
         <button class="btn btn-primary btn-lg" data-action="new-server">Create your first server</button>
       </div>
     </section>
@@ -628,18 +630,46 @@
         <legend>Look</legend>
         <label>Theme
           <select id="as-theme">
+            <option value="hud">HUD (dark dashboard)</option>
             <option value="cyberpunk">Neon (cyberpunk)</option>
             <option value="classic">Classic (calm dark)</option>
           </select>
         </label>
         <div class="accent-row" role="radiogroup" aria-label="Accent colour">
           <span class="muted small">Accent colour</span>
+          <label class="accent-swatch orange"><input type="radio" name="as-accent" value="orange" /><span></span>Orange</label>
+          <label class="accent-swatch red"><input type="radio" name="as-accent" value="red" /><span></span>Red</label>
+          <label class="accent-swatch white"><input type="radio" name="as-accent" value="white" /><span></span>White</label>
           <label class="accent-swatch yellow"><input type="radio" name="as-accent" value="yellow" /><span></span>Yellow</label>
           <label class="accent-swatch cyan"><input type="radio" name="as-accent" value="cyan" /><span></span>Cyan</label>
           <label class="accent-swatch magenta"><input type="radio" name="as-accent" value="magenta" /><span></span>Magenta</label>
           <label class="accent-swatch green"><input type="radio" name="as-accent" value="green" /><span></span>Green</label>
         </div>
-        <label class="checkbox"><input id="as-motion" type="checkbox" /> Animations (glow, flicker and glitch effects)</label>
+        <div class="grid-2">
+          <label class="hud-only-option">Panels
+            <select id="as-panels">
+              <option value="brackets">Corner brackets</option>
+              <option value="outline">Thin outline</option>
+              <option value="solid">Solid</option>
+            </select>
+          </label>
+          <label class="hud-only-option">Background
+            <select id="as-background">
+              <option value="globe">Globe and dot grid</option>
+              <option value="grid">Dot grid only</option>
+              <option value="plain">Plain</option>
+            </select>
+          </label>
+          <label>Spacing
+            <select id="as-density">
+              <option value="compact">Compact (fits more)</option>
+              <option value="comfortable">Comfortable</option>
+              <option value="spacious">Spacious</option>
+            </select>
+          </label>
+        </div>
+        <label class="checkbox"><input id="as-strip" type="checkbox" /> Status strip across the top (every server at a glance)</label>
+        <label class="checkbox"><input id="as-motion" type="checkbox" /> Animations (blinking status lights and other effects)</label>
       </fieldset>
       <fieldset class="settings-group">
         <legend>New servers</legend>
@@ -650,7 +680,7 @@
       </fieldset>
       <fieldset class="settings-group">
         <legend>Windows</legend>
-        <label class="checkbox"><input id="as-startup" type="checkbox" /> Open Self-Host MC when Windows starts</label>
+        <label class="checkbox"><input id="as-startup" type="checkbox" /> Open EZ Host when Windows starts</label>
         <p class="muted small">Only works in the installed app.</p>
       </fieldset>
       <fieldset class="settings-group">

@@ -280,7 +280,7 @@ async function setBanOffline(serverDir, player, ban, reason) {
   const list = readJson(file, []).filter((o) => o.uuid !== player.uuid);
   if (ban) {
     const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0000');
-    list.push({ uuid: player.uuid, name: player.name, created: now, source: 'Self-Host MC', expires: 'forever', reason: reason || 'Banned by the host' });
+    list.push({ uuid: player.uuid, name: player.name, created: now, source: 'EZ Host', expires: 'forever', reason: reason || 'Banned by the host' });
   }
   await fsp.writeFile(file, JSON.stringify(list, null, 2));
 }

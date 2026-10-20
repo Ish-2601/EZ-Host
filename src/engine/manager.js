@@ -104,6 +104,8 @@ function modpackFiles(zip, index) {
  *   'install'  (serverId, { message?, progress?: { label, done, total } })
  *   'changed'  ()  the server list or a server's config changed
  */
+const APP_ACCENTS = ['orange', 'red', 'white', 'yellow', 'cyan', 'magenta', 'green'];
+
 class ServerManager extends EventEmitter {
   constructor(dataRoot) {
     super();
@@ -642,7 +644,7 @@ class ServerManager extends EventEmitter {
   async acceptEula(id) {
     await fsp.writeFile(
       path.join(this.serverDir(id), 'eula.txt'),
-      `# Accepted in Self-Host MC on ${new Date().toISOString()}\n# https://aka.ms/MinecraftEULA\neula=true\n`
+      `# Accepted in EZ Host on ${new Date().toISOString()}\n# https://aka.ms/MinecraftEULA\neula=true\n`
     );
     return this.updateConfig(id, { eulaAccepted: true });
   }
@@ -1080,11 +1082,11 @@ class ServerManager extends EventEmitter {
             const mods = this.zomboid.dropWorkshopItems(id, [proc.failure.item]);
             this.emit('console', id, { text: `Removed Workshop item ${proc.failure.item}${mods.length ? ` (mods: ${mods.join(', ')})` : ''} from this server because Steam no longer has it.`, stream: 'system' });
             this.emit('mods', id);
-            proc.failure.summary += ' Self-Host MC removed it and is starting again.';
+            proc.failure.summary += ' EZ Host removed it and is starting again.';
             retry = true;
           }
           if (proc.failure.kind === 'workshop-query') {
-            proc.failure.summary += ' Self-Host MC is trying again.';
+            proc.failure.summary += ' EZ Host is trying again.';
             retry = true;
           }
         }
@@ -1346,8 +1348,12 @@ class ServerManager extends EventEmitter {
   appSettings() {
     const saved = this.readSettings().app || {};
     return {
-      theme: saved.theme === 'classic' ? 'classic' : 'cyberpunk',
-      accent: ['yellow', 'cyan', 'magenta', 'green'].includes(saved.accent) ? saved.accent : 'yellow',
+      theme: ['hud', 'cyberpunk', 'classic'].includes(saved.theme) ? saved.theme : 'hud',
+      accent: APP_ACCENTS.includes(saved.accent) ? saved.accent : 'orange',
+      panels: ['brackets', 'outline', 'solid'].includes(saved.panels) ? saved.panels : 'brackets',
+      background: ['globe', 'grid', 'plain'].includes(saved.background) ? saved.background : 'globe',
+      density: ['compact', 'comfortable', 'spacious'].includes(saved.density) ? saved.density : 'comfortable',
+      strip: saved.strip !== false,
       motion: saved.motion !== false,
       defaultMemoryMb: Number(saved.defaultMemoryMb) || null,
       defaultWhitelist: saved.defaultWhitelist === true,
@@ -1359,8 +1365,12 @@ class ServerManager extends EventEmitter {
   async setAppSettings(patch) {
     const current = this.appSettings();
     const next = { ...current };
-    if (patch.theme === 'classic' || patch.theme === 'cyberpunk') next.theme = patch.theme;
-    if (['yellow', 'cyan', 'magenta', 'green'].includes(patch.accent)) next.accent = patch.accent;
+    if (['hud', 'cyberpunk', 'classic'].includes(patch.theme)) next.theme = patch.theme;
+    if (APP_ACCENTS.includes(patch.accent)) next.accent = patch.accent;
+    if (['brackets', 'outline', 'solid'].includes(patch.panels)) next.panels = patch.panels;
+    if (['globe', 'grid', 'plain'].includes(patch.background)) next.background = patch.background;
+    if (['compact', 'comfortable', 'spacious'].includes(patch.density)) next.density = patch.density;
+    if (typeof patch.strip === 'boolean') next.strip = patch.strip;
     if (typeof patch.motion === 'boolean') next.motion = patch.motion;
     if (patch.defaultMemoryMb === null || patch.defaultMemoryMb === 0) next.defaultMemoryMb = null;
     else if (patch.defaultMemoryMb !== undefined) {

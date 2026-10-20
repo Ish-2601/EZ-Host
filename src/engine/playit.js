@@ -20,7 +20,7 @@ const API = 'https://api.playit.gg';
 const AGENT_VERSION = 'v1.0.10';
 const AGENT_URL = `https://github.com/playit-cloud/playit-agent/releases/download/${AGENT_VERSION}/playit-windows-x86_64-signed.exe`;
 const AGENT_PUBLISHER = 'Developed Methods LLC';
-const TUNNEL_NAME = 'Self-Host MC';
+const TUNNEL_NAME = 'EZ Host';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -98,14 +98,14 @@ class Playit extends EventEmitter {
     const code = crypto.randomBytes(5).toString('hex');
     const claimUrl = `https://playit.gg/claim/${code}`;
     this.linking = (async () => {
-      this.setState({ state: 'linking', message: 'Approve Self-Host MC in your browser to finish linking playit.gg.', claimUrl });
+      this.setState({ state: 'linking', message: 'Approve EZ Host in your browser to finish linking playit.gg.', claimUrl });
       openUrl(claimUrl);
       const deadline = Date.now() + 15 * 60 * 1000;
       for (;;) {
         if (Date.now() > deadline) throw new PlayitError('Linking timed out. Press "Connect playit.gg" to try again.');
         let setup;
         try {
-          setup = await api('/claim/setup', { code, agent_type: 'self-managed', version: 'Self-Host MC 0.1.0' });
+          setup = await api('/claim/setup', { code, agent_type: 'self-managed', version: 'EZ Host 0.2.0' });
         } catch (err) {
           if (err.status === 'fail') throw new PlayitError(`Linking failed: ${err.data}`);
           await sleep(3000);

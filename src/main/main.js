@@ -9,8 +9,9 @@ const cohostAuth = require('../engine/cohost-auth');
 const { startSftpHost } = require('../engine/sftp-host');
 const { createStatusServer } = require('../engine/status-server');
 
-// Keep data in %APPDATA%\self-host-mc whether running from source or installed
-// (the installed app would otherwise use its product name, "Self-Host MC").
+// Keep data in %APPDATA%\self-host-mc whether running from source or installed.
+// The app was called EZ Host before it became EZ Host; the folder name
+// stays so existing servers and settings carry over.
 // SELF_HOST_MC_DATA points a test run at a separate folder so it never touches real servers.
 app.setPath('userData', process.env.SELF_HOST_MC_DATA || path.join(app.getPath('appData'), 'self-host-mc'));
 
@@ -74,7 +75,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#14161a',
-    title: 'Self-Host MC',
+    title: 'EZ Host',
     icon: path.join(__dirname, '..', '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -238,7 +239,7 @@ function registerIpc() {
     });
     if (result.canceled || !result.filePath) return null;
     const status = server.status === 'running' ? 'Online' : server.status === 'installing' ? 'Installing' : 'Offline';
-    const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${safe(server.name)} — Minecraft server</title><style>body{margin:0;background:#14161a;color:#e7ebf2;font:16px system-ui;display:grid;place-items:center;min-height:100vh}.card{width:min(640px,calc(100% - 40px));box-sizing:border-box;padding:28px;background:#20242b;border:1px solid #3a404b;border-radius:16px}h1{margin-top:0}.tag{color:#8bd5ff}.address{padding:12px;background:#14161a;border-radius:8px;font:600 20px ui-monospace,monospace;word-break:break-all}li{margin:6px 0}</style><main class="card"><h1>${safe(server.name)}</h1><p class="tag">${safe(status)} · Minecraft ${safe(server.minecraft || 'version not set')}</p><h2>Join address</h2><div class="address">${safe(address)}</div><p>Java Edition players can add this address in Multiplayer. Use the Minecraft version shown above${server.loader && server.loader !== 'vanilla' ? ` with ${safe(server.loader)} ${safe(server.loaderVersion || '')} and the server's modpack` : ''}.</p><h2>Players online</h2><p>${players.length ? players.map(safe).join(', ') : 'No players right now.'}</p><p>Shared from Self-Host MC.</p></main></html>`;
+    const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${safe(server.name)} — Minecraft server</title><style>body{margin:0;background:#14161a;color:#e7ebf2;font:16px system-ui;display:grid;place-items:center;min-height:100vh}.card{width:min(640px,calc(100% - 40px));box-sizing:border-box;padding:28px;background:#20242b;border:1px solid #3a404b;border-radius:16px}h1{margin-top:0}.tag{color:#8bd5ff}.address{padding:12px;background:#14161a;border-radius:8px;font:600 20px ui-monospace,monospace;word-break:break-all}li{margin:6px 0}</style><main class="card"><h1>${safe(server.name)}</h1><p class="tag">${safe(status)} · Minecraft ${safe(server.minecraft || 'version not set')}</p><h2>Join address</h2><div class="address">${safe(address)}</div><p>Java Edition players can add this address in Multiplayer. Use the Minecraft version shown above${server.loader && server.loader !== 'vanilla' ? ` with ${safe(server.loader)} ${safe(server.loaderVersion || '')} and the server's modpack` : ''}.</p><h2>Players online</h2><p>${players.length ? players.map(safe).join(', ') : 'No players right now.'}</p><p>Shared from EZ Host.</p></main></html>`;
     await fs.writeFile(result.filePath, html, 'utf8');
     shell.showItemInFolder(result.filePath);
     return result.filePath;
@@ -472,7 +473,7 @@ function registerIpc() {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const image = nativeImage.createFromPath(result.filePaths[0]);
-    if (image.isEmpty()) throw new Error('That file is not an image Self-Host MC can read');
+    if (image.isEmpty()) throw new Error('That file is not an image EZ Host can read');
     // Minecraft only shows a 64x64 PNG: crop to a centred square, then resize.
     const { width, height } = image.getSize();
     const side = Math.min(width, height);

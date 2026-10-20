@@ -1,7 +1,7 @@
 {
-  "name": "self-host-mc",
-  "version": "0.1.2",
-  "description": "Host a modded Minecraft server on your own PC so friends can join.",
+  "name": "ez-host",
+  "version": "0.2.0",
+  "description": "EZ Host: host Minecraft and Project Zomboid servers on your own PC so friends can join from anywhere.",
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
@@ -20,10 +20,10 @@
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3"
   },
-  "productName": "Self-Host MC",
+  "productName": "EZ Host",
   "build": {
     "appId": "com.ish2601.selfhostmc",
-    "productName": "Self-Host MC",
+    "productName": "EZ Host",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -45,9 +45,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "Self-Host MC",
+      "shortcutName": "EZ Host",
       "deleteAppDataOnUninstall": false,
-      "artifactName": "Self-Host-MC-Setup-${version}.${ext}"
+      "artifactName": "EZ-Host-Setup-${version}.${ext}"
     },
     "asarUnpack": [
       "src/engine/map-worker.js",

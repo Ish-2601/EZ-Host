@@ -1,0 +1,270 @@
+/*
+ * HUD theme (the default): a calm sci-fi dashboard. Near-black, thin white and
+ * grey linework, small mono labels, corner brackets, orange accents.
+ * Original styling for EZ Host. Applied when <html data-theme="hud">.
+ * Options on <html>: data-accent, data-panels (brackets|outline|solid),
+ * data-bg (globe|grid|plain), data-density, data-strip, data-motion.
+ */
+
+html[data-theme="hud"] {
+  --bg: #050607;
+  --panel: rgba(12, 13, 16, 0.88);
+  --panel-2: #15171b;
+  --panel-3: #1d2025;
+  --border: #2b2f36;
+  --line: #c9ced6; /* linework: brackets, rules, outlines on hover */
+  --text: #e9ebee;
+  --muted: #868d97;
+  --accent: #ff7a1a;
+  --accent-hover: #ff9a4d;
+  --accent-soft: rgba(255, 122, 26, 0.13);
+  --on-accent: #0a0a0a;
+  --danger: #ff3d3d;
+  --danger-soft: rgba(255, 61, 61, 0.13);
+  --warn: #ffb020;
+  --warn-soft: rgba(255, 176, 32, 0.12);
+  --info: #c9ced6;
+  --edge: var(--line);
+  --radius: 0px;
+  --mono: 'Share Tech Mono', Consolas, monospace;
+  font-family: 'Barlow', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+html[data-theme="hud"][data-accent="red"] { --accent: #ff3d3d; --accent-hover: #ff7070; --accent-soft: rgba(255, 61, 61, 0.13); --danger: #ff7a1a; }
+html[data-theme="hud"][data-accent="white"] { --accent: #f1f3f5; --accent-hover: #ffffff; --accent-soft: rgba(241, 243, 245, 0.10); }
+html[data-theme="hud"][data-accent="yellow"] { --accent: #fcee0a; --accent-hover: #fff36b; --accent-soft: rgba(252, 238, 10, 0.11); }
+html[data-theme="hud"][data-accent="cyan"] { --accent: #00d8f0; --accent-hover: #6ff3ff; --accent-soft: rgba(0, 216, 240, 0.11); }
+html[data-theme="hud"][data-accent="magenta"] { --accent: #ff2a6d; --accent-hover: #ff6d97; --accent-soft: rgba(255, 42, 109, 0.13); --on-accent: #fff; }
+html[data-theme="hud"][data-accent="green"] { --accent: #39e07a; --accent-hover: #7cf0a8; --accent-soft: rgba(57, 224, 122, 0.12); }
+
+/* ---------- Backgrounds ---------- */
+html[data-theme="hud"] body { background: var(--bg); }
+html[data-theme="hud"] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+html[data-theme="hud"]:not([data-bg]) body::before,
+html[data-theme="hud"][data-bg="globe"] body::before {
+  background:
+    radial-gradient(circle at 1px 1px, rgba(201, 206, 214, 0.07) 1px, transparent 1.4px) 0 0 / 22px 22px,
+    url('hud-globe.svg') no-repeat right -12vh bottom -18vh / min(78vh, 900px);
+  opacity: 0.55;
+}
+html[data-theme="hud"][data-bg="grid"] body::before {
+  background:
+    radial-gradient(circle at 1px 1px, rgba(201, 206, 214, 0.12) 1px, transparent 1.4px) 0 0 / 18px 18px,
+    linear-gradient(rgba(201, 206, 214, 0.035) 1px, transparent 1px) 0 0 / 90px 90px,
+    linear-gradient(90deg, rgba(201, 206, 214, 0.035) 1px, transparent 1px) 0 0 / 90px 90px;
+}
+html[data-theme="hud"] .sidebar,
+html[data-theme="hud"] .main { position: relative; z-index: 1; }
+
+/* ---------- Type ---------- */
+html[data-theme="hud"] h1,
+html[data-theme="hud"] h2,
+html[data-theme="hud"] .status-line,
+html[data-theme="hud"] .source-title { font-family: 'Rajdhani', 'Segoe UI', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; }
+html[data-theme="hud"] h1 { font-size: 28px; font-weight: 700; }
+html[data-theme="hud"] h2 { font-size: 19px; font-weight: 700; }
+/* Card titles are small HUD labels with an accent tick. */
+html[data-theme="hud"] h3 {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--line);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+html[data-theme="hud"] h3::before { content: ''; width: 6px; height: 6px; background: var(--accent); flex-shrink: 0; }
+html[data-theme="hud"] .zbnew h3::before { display: none; }
+html[data-theme="hud"] code,
+html[data-theme="hud"] .console,
+html[data-theme="hud"] .tag,
+html[data-theme="hud"] .badge,
+html[data-theme="hud"] .mod-meta,
+html[data-theme="hud"] .map-hover,
+html[data-theme="hud"] .brand-sub,
+html[data-theme="hud"] .sidebar-label,
+html[data-theme="hud"] .tab,
+html[data-theme="hud"] .btn,
+html[data-theme="hud"] .server-item .sub,
+html[data-theme="hud"] .game-count,
+html[data-theme="hud"] legend { font-family: var(--mono); }
+
+/* ---------- Sidebar ---------- */
+html[data-theme="hud"] .sidebar { background: rgba(6, 7, 9, 0.92); border-right: 1px solid var(--border); }
+html[data-theme="hud"] .brand-name { font-family: 'Rajdhani', sans-serif; font-size: 24px; font-weight: 700; letter-spacing: 0.12em; color: var(--text); }
+html[data-theme="hud"] .brand-sub { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+html[data-theme="hud"] .sidebar-label { font-size: 10.5px; letter-spacing: 0.18em; color: var(--muted); }
+html[data-theme="hud"] .sidebar-label::before { content: '// '; color: var(--accent); }
+html[data-theme="hud"] .server-item { border-radius: 0; border: 1px solid transparent; border-left: 2px solid transparent; }
+html[data-theme="hud"] .server-item:hover { background: rgba(201, 206, 214, 0.05); border-color: var(--border); }
+html[data-theme="hud"] .server-item.active { background: var(--accent-soft); border-color: var(--border); border-left-color: var(--accent); }
+html[data-theme="hud"] .server-item img,
+html[data-theme="hud"] .server-item .icon-fallback { border-radius: 0; }
+html[data-theme="hud"] .game-btn { border-radius: 0; font-family: var(--mono); font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; background: transparent; }
+html[data-theme="hud"] .game-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+
+/* ---------- Panels ---------- */
+html[data-theme="hud"] .card,
+html[data-theme="hud"] .status-card,
+html[data-theme="hud"] .pack-card,
+html[data-theme="hud"] .source-tab,
+html[data-theme="hud"] .modal-box,
+html[data-theme="hud"] .tour-box {
+  border-radius: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  position: relative;
+}
+/* Corner brackets: four short L shapes drawn with gradients on a pseudo-element. */
+html[data-theme="hud"]:not([data-panels="outline"]):not([data-panels="solid"]) :is(.card, .status-card, .modal-box, .tour-box, .pack-card, .source-tab)::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  --b: var(--line);
+  background:
+    linear-gradient(var(--b), var(--b)) top left / 12px 1px,
+    linear-gradient(var(--b), var(--b)) top left / 1px 12px,
+    linear-gradient(var(--b), var(--b)) top right / 12px 1px,
+    linear-gradient(var(--b), var(--b)) top right / 1px 12px,
+    linear-gradient(var(--b), var(--b)) bottom left / 12px 1px,
+    linear-gradient(var(--b), var(--b)) bottom left / 1px 12px,
+    linear-gradient(var(--b), var(--b)) bottom right / 12px 1px,
+    linear-gradient(var(--b), var(--b)) bottom right / 1px 12px;
+  background-repeat: no-repeat;
+}
+html[data-theme="hud"] :is(.pack-card, .source-tab)::after { --b: var(--border); }
+html[data-theme="hud"] :is(.pack-card, .source-tab):hover::after,
+html[data-theme="hud"] :is(.pack-card.selected, .source-tab.active)::after { --b: var(--accent); }
+html[data-theme="hud"][data-panels="solid"] :is(.card, .status-card, .modal-box, .pack-card, .source-tab) { background: var(--panel-2); border-color: transparent; }
+html[data-theme="hud"] .pack-card:hover,
+html[data-theme="hud"] .source-tab:hover { border-color: #3a3f47; background: rgba(21, 23, 27, 0.92); }
+html[data-theme="hud"] .source-tab.active,
+html[data-theme="hud"] .pack-card.selected { border-color: var(--accent); background: var(--accent-soft); box-shadow: none; }
+html[data-theme="hud"] .pack-card img,
+html[data-theme="hud"] .pack-card .icon-fallback { border-radius: 0; }
+html[data-theme="hud"] .pack-card .launcher { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+
+html[data-theme="hud"] .status-card { border-left: 2px solid var(--border); }
+html[data-theme="hud"] .status-card.running { border-left-color: var(--accent); }
+html[data-theme="hud"] .status-card.problem { border-left-color: var(--danger); background: linear-gradient(90deg, var(--danger-soft), var(--panel) 40%); }
+html[data-theme="hud"] .status-line { font-size: 26px; font-weight: 700; }
+
+/* ---------- Buttons ---------- */
+html[data-theme="hud"] .btn {
+  border-radius: 0;
+  font-size: 12.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: transparent;
+  border: 1px solid #3a3f47;
+}
+html[data-theme="hud"] .btn:hover:not(:disabled) { border-color: var(--line); background: rgba(201, 206, 214, 0.06); color: var(--text); }
+html[data-theme="hud"] .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+html[data-theme="hud"] .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+html[data-theme="hud"] .btn-danger { color: var(--danger); border-color: var(--danger); }
+html[data-theme="hud"] .btn-danger:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+html[data-theme="hud"] .btn-ghost { border-color: transparent; color: var(--muted); }
+html[data-theme="hud"] .btn-lg { font-size: 14px; padding: 12px 24px; }
+
+/* ---------- Inputs ---------- */
+html[data-theme="hud"] :is(input[type=text], input[type=search], input[type=number], input[type=password], select, textarea) {
+  border-radius: 0;
+  background: rgba(5, 6, 7, 0.85);
+  border: 1px solid var(--border);
+}
+html[data-theme="hud"] :is(input, select, textarea):focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+html[data-theme="hud"] :is(input[type=range], input[type=checkbox], input[type=radio]) { accent-color: var(--accent); }
+html[data-theme="hud"] .switch-track { border-radius: 0; background: #2a2e35; }
+html[data-theme="hud"] .switch-track::after { border-radius: 0; }
+html[data-theme="hud"] .switch input:checked + .switch-track { background: var(--accent); }
+
+/* ---------- Tabs ---------- */
+html[data-theme="hud"] .tabs { border-bottom: 1px solid var(--border); gap: 2px; flex-wrap: wrap; }
+html[data-theme="hud"] .tab { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+html[data-theme="hud"] .tab:hover { color: var(--text); }
+html[data-theme="hud"] .tab.active { color: var(--text); border-bottom: 2px solid var(--accent); }
+
+/* ---------- Status, progress, small parts ---------- */
+html[data-theme="hud"] .dot { border-radius: 0; }
+html[data-theme="hud"] .dot.running,
+html[data-theme="hud"] .dot.online { background: var(--accent); box-shadow: 0 0 8px var(--accent-soft); }
+html[data-theme="hud"] .dot.error { background: var(--danger); box-shadow: none; }
+html[data-theme="hud"] .progress { border-radius: 0; height: 4px; background: #1b1e23; }
+html[data-theme="hud"] .progress-bar { background: var(--accent); }
+html[data-theme="hud"] :is(.tag, .badge, .player, .slot, .address, .address-big, .step-dot, .ctx-menu, .ctx-menu button, .toast, .map-wrap, .zbmap-wrap, .suggest-list, .rules-group, .zb-join-box, .zbmap-players li) { border-radius: 0; }
+html[data-theme="hud"] .tag { font-size: 10.5px; letter-spacing: 0.06em; }
+html[data-theme="hud"] .notice { border-radius: 0; border-left: 2px solid var(--warn); }
+html[data-theme="hud"] .notice.error { border-left-color: var(--danger); }
+html[data-theme="hud"] .address-big { border-color: var(--accent); }
+html[data-theme="hud"] .address-big code { color: var(--accent); font-size: 22px; }
+html[data-theme="hud"] .console { background: #030304; border-color: var(--border); color: #d8dce1; }
+html[data-theme="hud"] .console .system { color: var(--accent); }
+html[data-theme="hud"] .ctx-menu,
+html[data-theme="hud"] .toast { border-color: var(--line); background: #0b0c0e; }
+html[data-theme="hud"] .ctx-menu button:hover { background: var(--accent-soft); color: var(--text); }
+html[data-theme="hud"] .step-dot.active { background: var(--accent); color: var(--on-accent); }
+html[data-theme="hud"] .modal { background: rgba(2, 3, 4, 0.78); }
+html[data-theme="hud"] .settings-group { border-color: var(--border); border-radius: 0; }
+html[data-theme="hud"] .settings-group legend { color: var(--muted); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
+html[data-theme="hud"] .tour-count { font-family: var(--mono); color: var(--accent); letter-spacing: 0.12em; }
+html[data-theme="hud"] .metric strong { font-family: var(--mono); font-size: 20px; font-weight: 400; }
+
+/* ---------- Motion ---------- */
+@keyframes hud-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes hud-scan { from { transform: translateY(-100%); } to { transform: translateY(100vh); } }
+html[data-theme="hud"]:not([data-motion="off"]) .dot.running,
+html[data-theme="hud"]:not([data-motion="off"]) .dot.online,
+html[data-theme="hud"]:not([data-motion="off"]) .hud-strip .live { animation: hud-blink 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="hud"] * { animation: none !important; }
+}
+
+/* ---------- Status strip (any theme, when turned on) ---------- */
+.hud-strip { display: none; }
+html[data-strip="on"] .hud-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  position: sticky;
+  top: -28px;
+  margin: -28px -32px 18px;
+  padding: 6px 32px;
+  z-index: 5;
+  background: rgba(5, 6, 7, 0.92);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.hud-strip .cells { display: flex; gap: 3px; align-items: center; }
+.hud-strip .cell { width: 10px; height: 10px; background: #2e3239; cursor: pointer; border: none; padding: 0; }
+.hud-strip .cell.running { background: var(--accent); }
+.hud-strip .cell.starting, .hud-strip .cell.stopping, .hud-strip .cell.installing { background: var(--warn); }
+.hud-strip .cell.error { background: var(--danger); }
+.hud-strip .cell.active { outline: 1px solid var(--text); outline-offset: 1px; }
+.hud-strip strong { color: var(--text); font-weight: 400; }
+.hud-strip .sep { color: var(--border); }
+
+/* ---------- Density (any theme) ---------- */
+html[data-density="compact"] { font-size: 13px; }
+html[data-density="compact"] .main { padding: 18px 22px 28px; }
+html[data-density="compact"] .view { gap: 12px; max-width: 1180px; }
+html[data-density="compact"] .card { padding: 12px 14px; gap: 8px; }
+html[data-density="compact"] .btn { padding: 6px 11px; }
+html[data-density="compact"] .server-item { padding: 5px 8px; }
+html[data-density="compact"][data-strip="on"] .hud-strip { top: -18px; margin: -18px -22px 12px; padding: 5px 22px; }
+html[data-density="spacious"] .view { max-width: 1080px; gap: 22px; }
+html[data-density="spacious"] .card { padding: 22px; }

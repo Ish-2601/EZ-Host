@@ -251,7 +251,7 @@ class ServerProcess extends EventEmitter {
       // Give it a moment to finish writing its crash report, then end it.
       this.fatalTimer = setTimeout(() => {
         if (this.child && this.status === 'starting') {
-          this.pushLine('The server failed to start and did not exit by itself, so Self-Host MC stopped it.', 'system');
+          this.pushLine('The server failed to start and did not exit by itself, so EZ Host stopped it.', 'system');
           this.child.kill();
         }
       }, 15000);
