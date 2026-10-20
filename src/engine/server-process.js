@@ -58,6 +58,22 @@ class ServerProcess extends EventEmitter {
 
     const child = spawn(this.javaPath, args, { cwd: this.serverDir, windowsHide: true });
     this.child = child;
+    let finalized = false;
+    const finish = (code) => {
+      if (finalized) return;
+      finalized = true;
+      clearTimeout(this.stopTimer);
+      this.child = null;
+      if (this.players.size) {
+        this.players.clear();
+        this.emit('players', []);
+      }
+      // A stop the user asked for exits with 0; anything else is a crash.
+      this.crashed = this.status !== 'stopping' && code !== 0;
+      this.pushLine(`Server process exited with code ${code}`, 'system');
+      this.setStatus('stopped');
+      this.emit('exit', code);
+    };
 
     const splitter = (stream) => {
       let buffer = '';
@@ -78,20 +94,11 @@ class ServerProcess extends EventEmitter {
 
     child.on('error', (err) => {
       this.pushLine(`Could not start Java: ${err.message}`, 'system');
+      // A failed spawn does not always produce an `exit` event. Clear the
+      // starting state so the UI and the next start attempt do not hang.
+      if (child.pid == null) finish(null);
     });
-    child.on('exit', (code) => {
-      clearTimeout(this.stopTimer);
-      this.child = null;
-      if (this.players.size) {
-        this.players.clear();
-        this.emit('players', []);
-      }
-      // A stop the user asked for exits with 0; anything else is a crash.
-      this.crashed = this.status !== 'stopping' && code !== 0;
-      this.pushLine(`Server process exited with code ${code}`, 'system');
-      this.setStatus('stopped');
-      this.emit('exit', code);
-    });
+    child.on('exit', finish);
   }
 
   trackPlayers(line) {

@@ -9,6 +9,7 @@ const state = {
   profiles: null,
   totalMemoryMb: 8192,
   install: {}, // serverId -> { step, label, done, total }
+  startup: {}, // serverId -> startup phase and elapsed-time origin
   players: {}, // serverId -> [names]
   playit: { state: 'unlinked', linked: false },
   join: {}, // serverId -> joinInfo
@@ -17,6 +18,18 @@ const state = {
   playerList: [],
   playerUuid: null, // selected player on the Players tab
   playerTimer: null,
+  backups: [],
+  backupSettings: null,
+  tasks: [],
+  fileDir: '.',
+  fileEntries: [],
+  fileEditorPath: null,
+  auth: { username: 'Host', permissions: [], host: true },
+  metricsTimer: null,
+  commandButtons: [],
+  packDiff: null,
+  sftpCredentials: null,
+  liveStatus: null,
   menuFor: null, // server id the right-click menu is open for
 };
 
@@ -74,6 +87,35 @@ async function attempt(fn) {
     toast(String(err.message || err).replace(/^Error invoking remote method '[^']+': (\w*Error: )?/, ''), true);
     return undefined;
   }
+}
+
+function confirmDialog(message, { title = 'Are you sure?', confirmText = 'Continue', danger = true } = {}) {
+  const modal = $('confirm-modal');
+  const cancel = $('confirm-cancel');
+  const confirm = $('confirm-accept');
+  $('confirm-title').textContent = title;
+  $('confirm-message').textContent = message;
+  confirm.textContent = confirmText;
+  confirm.className = `btn ${danger ? 'btn-danger' : 'btn-primary'}`;
+  modal.classList.remove('hidden');
+
+  return new Promise((resolve) => {
+    const finish = (accepted) => {
+      modal.classList.add('hidden');
+      modal.removeEventListener('click', onOverlay);
+      document.removeEventListener('keydown', onKeyDown);
+      cancel.onclick = null;
+      confirm.onclick = null;
+      resolve(accepted);
+    };
+    const onOverlay = (event) => { if (event.target === modal) finish(false); };
+    const onKeyDown = (event) => { if (event.key === 'Escape') finish(false); };
+    cancel.onclick = () => finish(false);
+    confirm.onclick = () => finish(true);
+    modal.addEventListener('click', onOverlay);
+    document.addEventListener('keydown', onKeyDown);
+    cancel.focus();
+  });
 }
 
 function copyButton(text) {
@@ -348,6 +390,11 @@ async function importFile() {
 // ---------- server page ----------
 
 async function openServer(id) {
+  if (state.selectedId !== id) {
+    state.fileDir = '.';
+    state.fileEditorPath = null;
+    $('file-editor').classList.add('hidden');
+  }
   state.selectedId = id;
   renderServerList();
   showView('server');
@@ -365,6 +412,8 @@ async function openServer(id) {
 }
 
 function renderServer(s) {
+  if (s.startup) state.startup[s.id] = s.startup;
+  else if (s.status !== 'starting') delete state.startup[s.id];
   $('srv-name').textContent = s.name;
   $('srv-icon').src = (s.source && s.source.iconUrl) || 'icon.svg';
   const parts = [];
@@ -394,7 +443,10 @@ function renderStatus(s) {
     dot = 'error';
     help = s.installError;
   } else if (s.status === 'starting') {
-    help = 'Loading mods and the world. Modded servers can take a minute or two.';
+    const startup = state.startup[s.id];
+    help = startup
+      ? `${startup.label || 'Starting Minecraft server'}. Large Forge packs can take several minutes; Console shows the latest details.`
+      : 'Loading mods and the world. Large modpacks can take several minutes.';
   } else if (s.status === 'running') {
     help = players.length ? 'Players online:' : 'Your server is up. Share the address below with your friends.';
   } else if (s.status === 'stopping') {
@@ -424,10 +476,40 @@ function renderStatus(s) {
 
   $('install-progress').classList.toggle('hidden', s.status !== 'installing');
   if (s.status === 'installing') renderInstall(s.id);
+  $('startup-progress').classList.toggle('hidden', s.status !== 'starting');
+  if (s.status === 'starting') renderStartup(s.id);
 
   const box = $('players');
   box.classList.toggle('hidden', s.status !== 'running' || !players.length);
   box.replaceChildren(...players.map((p) => el('span', { class: 'player' }, p)));
+}
+
+function renderStartup(id) {
+  const info = state.startup[id] || { label: 'Starting Minecraft server', startedAt: Date.now() };
+  const bar = $('startup-progress-bar');
+  const label = $('startup-label');
+  const elapsed = $('startup-elapsed');
+  if (!bar || !label || !elapsed) return;
+  label.textContent = info.label || 'Starting Minecraft server';
+  const seconds = Math.max(0, Math.floor((Date.now() - (info.startedAt || Date.now())) / 1000));
+  elapsed.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  $('startup-guidance').textContent = seconds >= 300
+    ? 'This is taking a while. Check Console for errors or a stalled download; the elapsed time and current phase are shown above.'
+    : 'Large Forge packs can take several minutes. Check Console for detailed startup output.';
+  const progress = info.progress;
+  const determinate = progress && Number(progress.total) > 0;
+  bar.classList.toggle('indeterminate', !determinate);
+  if (determinate) {
+    const percent = Math.max(0, Math.min(100, (Number(progress.done) / Number(progress.total)) * 100));
+    bar.style.width = `${percent}%`;
+    bar.setAttribute('aria-valuenow', String(Math.round(percent)));
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+    elapsed.textContent += ` · ${Math.round(percent)}%`;
+  } else {
+    bar.style.removeProperty('width');
+    bar.removeAttribute('aria-valuenow');
+  }
 }
 
 /** Map install messages to the four friendly steps. */
@@ -532,7 +614,9 @@ function renderOnlineBox() {
 }
 
 async function newAddress(s) {
-  if (!confirm(`Get a new online address for "${s.name}"? The old address stops working and friends will need the new one.`)) return;
+  if (!(await confirmDialog(`Get a new online address for "${s.name}"? The old address stops working and friends will need the new one.`, {
+    title: 'Get a new online address?', confirmText: 'Get new address', danger: false,
+  }))) return;
   await attempt(() => api.newAddress(s.id));
   state.tunnels[s.id] = (await attempt(() => api.getTunnel(s.id))) || {};
   renderOnlineBox();
@@ -695,15 +779,37 @@ function itemLabel(item) {
 function slotEl(item, key, player, extraClass = '') {
   if (!item) return el('div', { class: `slot ${extraClass}` });
   const label = itemLabel(item);
+  const [namespace, itemId] = item.id.includes(':') ? item.id.split(':', 2) : ['minecraft', item.id];
+  // Minecraft's vanilla item textures are served per game version. Modded
+  // items (or items without a matching texture) use the neutral fallback.
+  const minecraftVersion = current()?.minecraft || '1.21.4';
+  const texture = namespace !== 'minecraft' || !/^[a-z0-9_./-]+$/i.test(itemId)
+    ? null
+    : /^26\./.test(minecraftVersion)
+      ? `https://project-crafting.github.io/minecraft-auto-updated-textures-api/items/${itemId}.png`
+      : `https://mcasset.cloud/${encodeURIComponent(minecraftVersion)}/assets/minecraft/textures/item/${itemId}.png`;
+  const artwork = el('span', { class: 'item-fallback', 'aria-hidden': 'true' }, '◇');
+  const image = texture ? el('img', {
+    class: 'item-icon',
+    src: texture,
+    alt: label,
+    title: label,
+    loading: 'lazy',
+    onload: () => artwork.remove(),
+    onerror: (event) => event.currentTarget.remove(),
+  }) : null;
   return el('div', {
     class: `slot filled ${item.enchanted ? 'enchanted' : ''} ${extraClass}`,
+    'aria-label': `${label} × ${item.count}`,
     title: `${label} × ${item.count}\n${item.id}${item.enchanted ? '\nEnchanted' : ''}\nClick to remove`,
     onclick: () => removeItem(player, key, item),
-  }, el('span', {}, label.length > 22 ? `${label.slice(0, 20)}…` : label), item.count > 1 ? el('span', { class: 'count' }, item.count) : null);
+  }, artwork, image, item.count > 1 ? el('span', { class: 'count' }, item.count) : null);
 }
 
 async function removeItem(player, key, item) {
-  if (!confirm(`Remove ${itemLabel(item)} × ${item.count} from ${player.name || 'this player'}?`)) return;
+  if (!(await confirmDialog(`Remove ${itemLabel(item)} × ${item.count} from ${player.name || 'this player'}?`, {
+    title: 'Remove this item?', confirmText: 'Remove item',
+  }))) return;
   await playerDo(player, 'remove', { slot: key });
 }
 
@@ -739,7 +845,9 @@ async function showPlayer(uuid, { quiet = false } = {}) {
   const button = (label, action, args, opts = {}) => {
     const b = el('button', { class: `btn ${opts.cls || ''}`, type: 'button' }, label);
     b.onclick = async () => {
-      if (opts.confirm && !confirm(opts.confirm)) return;
+      if (opts.confirm && !(await confirmDialog(opts.confirm, {
+        title: opts.confirmTitle || 'Confirm player change', confirmText: opts.confirmText || 'Continue', danger: opts.danger !== false,
+      }))) return;
       b.disabled = true;
       await playerDo(d, action, typeof args === 'function' ? args() : args);
       b.disabled = false;
@@ -757,7 +865,7 @@ async function showPlayer(uuid, { quiet = false } = {}) {
     el('span', { class: 'muted small' }, 'XP level'), xp, button('Set', 'xp', () => ({ level: Number(xp.value) })),
     d.op ? button('Remove OP', 'deop') : button('Make OP', 'op'),
     online ? button('Kick', 'kick', {}, { cls: 'btn-danger', confirm: `Kick ${d.name}?` }) : null,
-    button('Clear inventory', 'clear', {}, { cls: 'btn-danger', confirm: `Delete everything in ${d.name || 'this player'}'s inventory? This can't be undone.` })
+    button('Clear inventory', 'clear', {}, { cls: 'btn-danger', confirmTitle: 'Clear inventory?', confirmText: 'Clear inventory', confirm: `Delete everything in ${d.name || 'this player'}'s inventory? This can't be undone.` })
   );
   const give = el('div', { class: 'player-actions' });
   const itemInput = el('input', { type: 'text', class: 'item', placeholder: 'Item id, e.g. minecraft:diamond' });
@@ -820,7 +928,9 @@ async function openPlayerMenu(event, player) {
     if (opts.disabled) b.disabled = true;
     b.onclick = async () => {
       closePlayerMenu();
-      if (opts.confirm && !confirm(opts.confirm)) return;
+      if (opts.confirm && !(await confirmDialog(opts.confirm, {
+        title: opts.confirmTitle || 'Confirm player change', confirmText: opts.confirmText || 'Continue', danger: opts.danger !== false,
+      }))) return;
       if (opts.run) return opts.run();
       await playerDo(player, action, args);
       loadPlayers();
@@ -830,6 +940,7 @@ async function openPlayerMenu(event, player) {
 
   label(name + (online ? ' · online' : ' · offline'));
   item(player.op ? 'Remove OP' : 'Give OP', player.op ? 'deop' : 'op', {}, {
+    confirmTitle: 'Give operator powers?', confirmText: 'Make OP',
     confirm: player.op ? null : `Give ${name} operator powers? OPs can use every command, including /stop and /ban.`,
   });
   if (player.whitelisted) item('Remove from whitelist', null, {}, { run: async () => { await attempt(() => api.whitelistRemove(s.id, player.name)); loadPlayers(); } });
@@ -886,6 +997,180 @@ async function loadWorld() {
   if (typeof WorldMap !== 'undefined') WorldMap.open(id);
   state.pregen[id] = (await attempt(() => api.pregenStatus(id))) || {};
   renderPregen();
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+async function loadBackupsTasks() {
+  const id = state.selectedId;
+  const [backups, settings, tasks] = await Promise.all([
+    api.listBackups(id).catch(() => []), api.backupSettings(id).catch(() => null), api.listTasks(id).catch(() => []),
+  ]);
+  if (id !== state.selectedId) return;
+  state.backups = backups || [];
+  state.backupSettings = settings;
+  state.tasks = tasks || [];
+  renderBackups();
+}
+
+function renderBackups() {
+  const s = current();
+  if (!s) return;
+  $('backup-now').disabled = s.status !== 'stopped';
+  const settings = state.backupSettings || {};
+  $('backup-retention').value = settings.retention || 5;
+  $('backup-include').value = (settings.include || []).join('\n');
+  $('backup-exclude').value = (settings.exclude || []).join('\n');
+  const list = $('backup-list');
+  if (!state.backups.length) fill(list, el('p', { class: 'muted small' }, 'No restore points yet.'));
+  else fill(list, state.backups.map((backup) => {
+    const restore = el('button', { class: 'btn', type: 'button', disabled: s.status !== 'stopped' }, 'Restore');
+    restore.onclick = async () => {
+      if (!(await confirmDialog(`Restore "${backup.reason}" from ${new Date(backup.createdAt).toLocaleString()}? A backup of the current files will be saved first.`, {
+        title: 'Restore this backup?', confirmText: 'Restore backup',
+      }))) return;
+      restore.disabled = true;
+      if (await attempt(() => api.restoreBackup(s.id, backup.id))) toast('Backup restored.');
+      await loadBackupsTasks();
+      restore.disabled = false;
+    };
+    return el('div', { class: 'backup-row' },
+      el('div', { class: 'grow' },
+        el('strong', {}, backup.reason || 'Restore point'),
+        el('div', { class: 'muted small' }, `${new Date(backup.createdAt).toLocaleString()} · ${formatBytes(backup.size)}`)
+      ), restore
+    );
+  }));
+  const chain = $('task-chain');
+  const selected = chain.value;
+  fill(chain, el('option', { value: '' }, 'No follow-up'), state.tasks.map((task) => el('option', { value: task.id }, task.name)));
+  chain.value = state.tasks.some((task) => task.id === selected) ? selected : '';
+  const taskList = $('task-list');
+  if (!state.tasks.length) fill(taskList, el('p', { class: 'muted small' }, 'No scheduled tasks yet.'));
+  else fill(taskList, state.tasks.map((task) => {
+    const enabled = el('input', { type: 'checkbox' });
+    enabled.checked = task.enabled;
+    enabled.onchange = async () => {
+      await attempt(() => api.saveTasks(s.id, state.tasks.map((t) => t.id === task.id ? { ...t, enabled: enabled.checked } : t)));
+      await loadBackupsTasks();
+    };
+    const chainSelect = el('select', {}, [el('option', { value: '' }, 'No follow-up'), ...state.tasks.filter((t) => t.id !== task.id).map((t) => el('option', { value: t.id }, t.name))]);
+    chainSelect.value = task.chainTaskId || '';
+    chainSelect.onchange = async () => {
+      await attempt(() => api.saveTasks(s.id, state.tasks.map((t) => t.id === task.id ? { ...t, chainTaskId: chainSelect.value || null } : t)));
+      await loadBackupsTasks();
+    };
+    const run = el('button', { class: 'btn', type: 'button' }, 'Run now');
+    run.onclick = async () => {
+      run.disabled = true;
+      await attempt(() => api.runTask(s.id, task.id));
+      await loadBackupsTasks();
+      run.disabled = false;
+    };
+    const remove = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Remove');
+    remove.onclick = async () => {
+      await attempt(() => api.saveTasks(s.id, state.tasks.filter((t) => t.id !== task.id).map((t) => t.chainTaskId === task.id ? { ...t, chainTaskId: null } : t)));
+      await loadBackupsTasks();
+    };
+    const type = { backup: 'Backup', restart: `Restart${task.warningMinutes ? ` (warn ${task.warningMinutes}m)` : ''}`, start: 'Start', stop: 'Stop', command: `Command: ${task.command}` }[task.type];
+    return el('div', { class: 'task-row' }, enabled,
+      el('div', { class: 'grow' }, el('strong', {}, task.name), el('div', { class: 'muted small' }, `${type} · ${task.frequency} at ${task.time}${task.frequency === 'weekly' ? ` · ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][task.dayOfWeek]}` : ''}${task.nextRunAt ? ` · next ${new Date(task.nextRunAt).toLocaleString()}` : ''}`)),
+      chainSelect, run, remove
+    );
+  }));
+}
+
+function updateTaskFields() {
+  const type = $('task-type').value;
+  const weekly = $('task-frequency').value === 'weekly';
+  $('task-day-wrap').classList.toggle('hidden', !weekly);
+  $('task-warning-wrap').classList.toggle('hidden', type !== 'restart');
+  $('task-command-wrap').classList.toggle('hidden', type !== 'command');
+}
+
+async function loadFiles() {
+  const id = state.selectedId;
+  const dir = state.fileDir;
+  const entries = await attempt(() => api.listServerFiles(id, dir));
+  if (!entries || id !== state.selectedId || dir !== state.fileDir) return;
+  state.fileEntries = entries;
+  $('file-breadcrumb').textContent = dir === '.' ? 'Server root' : `Server root / ${dir.split('/').join(' / ')}`;
+  const list = $('file-list');
+  if (!entries.length) fill(list, el('p', { class: 'muted small' }, 'This folder is empty.'));
+  else fill(list, entries.map((entry) => {
+    const name = el('button', { type: 'button', class: `file-name${entry.directory ? ' folder' : ''}` }, `${entry.directory ? '📁' : '📄'}  ${entry.name}`);
+    name.onclick = () => entry.directory ? (state.fileDir = entry.path, loadFiles()) : editServerFile(entry.path);
+    const actions = [];
+    if (entry.directory) {
+      const archive = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Create ZIP');
+      archive.onclick = async () => { await attempt(() => api.archiveServerFolder(id, entry.path)); };
+      actions.push(archive);
+    } else {
+      actions.push(el('span', { class: 'muted small file-size' }, formatBytes(entry.size)));
+      const download = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Download');
+      download.onclick = () => attempt(() => api.downloadServerFile(id, entry.path));
+      actions.push(download);
+      if (/\.zip$/i.test(entry.name)) {
+        const extract = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Extract');
+        extract.onclick = async () => {
+          if (await attempt(() => api.extractServerArchive(id, entry.path))) { toast('Archive extracted.'); loadFiles(); }
+        };
+        actions.push(extract);
+      }
+    }
+    const rename = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Rename');
+    rename.onclick = async () => {
+      const nextName = await fileNameDialog('Rename item', entry.name);
+      if (nextName && await attempt(() => api.renameServerFile(id, entry.path, nextName))) loadFiles();
+    };
+    const remove = el('button', { class: 'btn btn-ghost danger-text', type: 'button' }, 'Delete');
+    remove.onclick = async () => {
+      if (await confirmDialog(`Delete ${entry.name}${entry.directory ? ' and everything inside it' : ''}? This cannot be undone.`, { title: 'Delete this item?', confirmText: 'Delete' })) {
+        if (await attempt(() => api.deleteServerFile(id, entry.path))) loadFiles();
+      }
+    };
+    actions.push(rename, remove);
+    return el('div', { class: 'file-row' }, name, el('div', { class: 'row wrap end file-actions' }, actions));
+  }));
+}
+
+function fileNameDialog(title, initial = '') {
+  const modal = $('file-name-modal');
+  const input = $('file-name-input');
+  $('file-name-title').textContent = title;
+  input.value = initial;
+  modal.classList.remove('hidden');
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      modal.classList.add('hidden');
+      $('file-name-form').onsubmit = null;
+      $('file-name-cancel').onclick = null;
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onKey = (event) => { if (event.key === 'Escape') finish(null); };
+    $('file-name-form').onsubmit = (event) => { event.preventDefault(); finish(input.value.trim() || null); };
+    $('file-name-cancel').onclick = () => finish(null);
+    document.addEventListener('keydown', onKey);
+    input.focus();
+    input.select();
+  });
+}
+
+async function editServerFile(file) {
+  const content = await attempt(() => api.readServerFile(state.selectedId, file));
+  if (content === undefined) return;
+  state.fileEditorPath = file;
+  $('file-editor-title').textContent = file;
+  $('file-editor-content').value = content;
+  $('file-editor-status').textContent = '';
+  $('file-editor').classList.remove('hidden');
+  $('file-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 /** replaceChildren that skips null/false entries. */
@@ -1006,7 +1291,9 @@ async function deleteServer(s) {
     toast('Stop the server before deleting it.', true);
     return;
   }
-  if (!confirm(`Delete "${s.name}"?\n\nIts world, mods and settings will be permanently removed from this PC. This can't be undone.`)) return;
+  if (!(await confirmDialog("Its world, mods, and settings will be permanently removed from this PC. This can't be undone.", {
+    title: `Delete "${s.name}"?`, confirmText: 'Delete server',
+  }))) return;
   if (await attempt(async () => (await api.deleteServer(s.id), true))) {
     if (state.selectedId === s.id) state.selectedId = null;
     await refreshServers();
@@ -1022,7 +1309,7 @@ async function deleteServer(s) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  for (const tab of ['friends', 'players', 'world', 'console', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
+  for (const tab of ['friends', 'players', 'world', 'console', 'backups', 'files', 'tools', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
   if (name === 'world') loadWorld();
   else if (typeof WorldMap !== 'undefined') WorldMap.close();
   clearInterval(state.playerTimer);
@@ -1035,8 +1322,186 @@ function switchTab(name) {
     }, 5000);
   }
   if (name === 'settings') loadSettings();
+  if (name === 'backups') loadBackupsTasks();
+  if (name === 'files') loadFiles();
   if (name === 'friends') loadFriends();
   if (name === 'console') $('console').scrollTop = $('console').scrollHeight;
+  clearInterval(state.metricsTimer);
+  if (name === 'tools') {
+    loadTools();
+    state.metricsTimer = setInterval(() => { if (!document.hidden) updateMetrics(); }, 10000);
+  }
+}
+
+function hasPermission(permission) {
+  return state.auth.host || (state.auth.permissions || []).includes(permission);
+}
+
+async function updateMetrics() {
+  if (!state.selectedId || !hasPermission('server')) return;
+  const m = await attempt(() => api.serverMetrics(state.selectedId));
+  if (!m || !document.getElementById('metrics-grid')) return;
+  const rows = [
+    ['CPU', m.cpuPercent == null ? '—' : `${m.cpuPercent.toFixed(1)}%`],
+    ['Java memory', m.memoryUsedMb == null ? '—' : `${formatMb(m.memoryUsedMb)} / ${formatMb(current()?.memoryMb || 0)}`],
+    ['Host memory', `${formatMb(m.systemMemoryUsedMb)} / ${formatMb(m.systemMemoryMb)}`],
+    ['Players', `${m.playerCount} / ${m.maxPlayers || '—'}`],
+    ['Tick rate', m.tps == null ? 'Unavailable' : `${m.tps.toFixed(1)} TPS`],
+    ['Server files', `${formatBytes(m.diskBytes)}${m.diskScanLimited ? '+' : ''}`],
+  ];
+  $('metrics-grid').replaceChildren(...rows.map(([label, value], index) => {
+    const card = el('div', { class: `metric${index === 5 && m.diskWarning ? ' warn' : ''}` }, el('span', { class: 'muted small' }, label), el('strong', {}, value));
+    return card;
+  }));
+  $('metrics-updated').textContent = new Date().toLocaleTimeString();
+  if (document.activeElement !== $('disk-warning-limit')) $('disk-warning-limit').value = m.diskWarningGb;
+  $('metrics-note').textContent = m.diskWarning
+    ? `Disk usage has passed the ${m.diskWarningGb} GB warning limit. Remove old backups or unused files.`
+    : m.tps == null ? 'TPS is reported by Paper servers. Vanilla servers do not expose tick performance to the app.' : '';
+}
+
+function renderQuickCommands() {
+  const root = $('quick-command-list');
+  root.replaceChildren(...state.commandButtons.map((item) => {
+    const row = el('div', { class: 'tool-row' }, el('div', { class: 'tool-info' }, el('strong', {}, item.label), el('span', { class: 'muted small' }, `/${item.command}`)));
+    const run = el('button', { class: 'btn btn-primary', type: 'button' }, 'Run');
+    run.onclick = async () => { await attempt(() => api.command(state.selectedId, item.command)); toast(`Ran ${item.label}`); };
+    const remove = el('button', { class: 'btn btn-ghost', type: 'button', title: 'Remove command' }, 'Remove');
+    remove.onclick = async () => { state.commandButtons = state.commandButtons.filter((x) => x.id !== item.id); if (await attempt(() => api.setCommandButtons(state.selectedId, state.commandButtons))) renderQuickCommands(); };
+    row.append(run, remove);
+    return row;
+  }));
+  if (!state.commandButtons.length) root.append(el('p', { class: 'muted small' }, 'No saved command buttons yet.'));
+}
+
+async function loadActivity() {
+  if (!hasPermission('server')) return;
+  const entries = await attempt(() => api.activity(state.selectedId)) || [];
+  $('activity-list').replaceChildren(...entries.map((entry) => el('div', { class: 'activity-row' },
+    el('div', { class: 'activity-info' }, el('strong', {}, entry.action), el('span', { class: 'muted small' }, `${entry.actor} · ${new Date(entry.at).toLocaleString()}`)))));
+  if (!entries.length) $('activity-list').append(el('p', { class: 'muted small' }, 'Changes will appear here.'));
+}
+
+async function loadCohostUi() {
+  state.auth = (await attempt(() => api.cohostStatus())) || state.auth;
+  $('auth-current').textContent = state.auth.host ? 'Signed in as host' : `Signed in as ${state.auth.username}`;
+  $('cohost-owner-tools').classList.toggle('hidden', !state.auth.host);
+  $('cohost-logout').classList.toggle('hidden', state.auth.host);
+  $('cohost-login-form').classList.toggle('hidden', !state.auth.host);
+  for (const id of ['status-lan', 'live-status-start', 'live-status-stop', 'live-status-open', 'live-status-copy']) $(id).classList.toggle('hidden', !hasPermission('settings'));
+  $('disk-warning-limit').parentElement.classList.toggle('hidden', !hasPermission('settings'));
+  $('disk-warning-save').classList.toggle('hidden', !hasPermission('settings'));
+  const tabPermissions = { friends: 'server', players: 'players', world: 'server', console: 'console', backups: 'backups', files: 'files', settings: 'settings' };
+  for (const button of document.querySelectorAll('.tab')) {
+    const permission = tabPermissions[button.dataset.tab];
+    button.classList.toggle('hidden', Boolean(permission && !hasPermission(permission)));
+  }
+  for (const [id, permission] of [['metrics-card', 'server'], ['software-card', 'settings'], ['pack-update-card', 'settings'], ['plugin-card', 'tools'], ['bedrock-card', 'tools'], ['tool-share-card', 'server'], ['notification-card', 'settings'], ['command-card', 'tools'], ['activity-card', 'server'], ['sftp-card', 'settings']]) {
+    $(id).classList.toggle('hidden', !hasPermission(permission));
+  }
+  if (state.auth.host) {
+    const accounts = await attempt(() => api.listCohosts()) || [];
+    $('cohost-list').replaceChildren(...accounts.map((account) => {
+      const row = el('div', { class: 'tool-row' }, el('div', { class: 'tool-info' }, el('strong', {}, account.username), el('span', { class: 'muted small' }, `${account.permissions.join(', ')}${account.twoFactor ? ' · authenticator required' : ''}`)));
+      const remove = el('button', { class: 'btn btn-ghost danger-text', type: 'button' }, 'Remove');
+      remove.onclick = async () => { if (await confirmDialog(`Remove co-host account ${account.username}?`, { title: 'Remove co-host', confirmText: 'Remove' })) { await attempt(() => api.removeCohost(account.username)); loadCohostUi(); } };
+      row.append(remove);
+      return row;
+    }));
+    if (!accounts.length) $('cohost-list').append(el('p', { class: 'muted small' }, 'No co-host accounts yet.'));
+  } else {
+    $('cohost-list').replaceChildren();
+    $('cohost-login-form').classList.add('hidden');
+  }
+}
+
+async function loadTools() {
+  const server = current();
+  if (!server) return;
+  await loadCohostUi();
+  if (hasPermission('settings')) {
+    const versions = await attempt(() => api.minecraftVersions()) || [];
+    $('software-version').replaceChildren(...versions.map((version) => el('option', { value: version.id }, version.id)));
+    const chosen = versions.some((version) => version.id === server.minecraft) ? server.minecraft : versions[0]?.id;
+    if (chosen) $('software-version').value = chosen;
+    $('software-type').value = server.software || server.loader || 'vanilla';
+  }
+  if (hasPermission('server')) {
+    await Promise.all([updateMetrics(), loadActivity()]);
+  }
+  if (hasPermission('tools')) {
+    state.commandButtons = await attempt(() => api.commandButtons(server.id)) || [];
+    renderQuickCommands();
+  }
+  if (hasPermission('settings')) {
+    const notifications = await attempt(() => api.notificationSettings()) || {};
+    $('notify-start').checked = notifications.start !== false;
+    $('notify-stop').checked = notifications.stop !== false;
+    $('notify-crash').checked = notifications.crash !== false;
+    $('notify-attention').checked = notifications.attention !== false;
+    const sftp = await attempt(() => api.sftpStatus(server.id));
+    if (sftp?.active) renderSftp(sftp);
+    else renderSftp(null);
+    const liveStatus = await attempt(() => api.statusPageState(server.id));
+    state.liveStatus = liveStatus && liveStatus.active ? liveStatus : null;
+    renderLiveStatus();
+  }
+  if (document.getElementById('pack-update-check')) $('pack-update-check').disabled = !hasPermission('settings') || !server.source || server.source.type !== 'modrinth';
+}
+
+function renderSftp(info) {
+  const active = Boolean(info && info.active);
+  $('sftp-start').classList.toggle('hidden', active);
+  $('sftp-stop').classList.toggle('hidden', !active);
+  $('sftp-copy').classList.toggle('hidden', !state.sftpCredentials);
+  if (!active) {
+    state.sftpCredentials = null;
+    $('sftp-copy').classList.add('hidden');
+    $('sftp-details').textContent = 'SFTP is stopped.';
+    return;
+  }
+  const credentials = state.sftpCredentials;
+  if (info.otherServer) {
+    $('sftp-details').replaceChildren(el('p', { class: 'danger-text' }, `SFTP is currently sharing “${info.serverName}”. Stop it before starting access for this server.`));
+    return;
+  }
+  const addresses = credentials?.addresses || [info.host === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0'];
+  $('sftp-details').replaceChildren(
+    el('p', {}, `Connected clients use username “minecraft” on port ${info.port}. Address${addresses.length === 1 ? '' : 'es'}: ${addresses.map((address) => `${address}:${info.port}`).join(', ')}`),
+    el('p', {}, `Host key fingerprint: ${info.fingerprint}`),
+    credentials ? el('p', {}, `Temporary password: ${credentials.password}`) : el('p', { class: 'muted' }, 'The password is shown only when SFTP starts. Stop and start to generate a new password.'),
+  );
+}
+
+function renderLiveStatus() {
+  const info = state.liveStatus;
+  const active = Boolean(info && info.active);
+  $('live-status-start').classList.toggle('hidden', active);
+  $('live-status-stop').classList.toggle('hidden', !active);
+  $('live-status-open').classList.toggle('hidden', !active || info.otherServer);
+  $('live-status-copy').classList.toggle('hidden', !active || info.otherServer);
+  $('status-lan').disabled = active;
+  if (!active) { $('live-status-details').textContent = 'Live page is stopped.'; return; }
+  if (info.otherServer) { $('live-status-details').textContent = `Live page is currently serving ${info.serverName}. Stop it first to switch servers.`; return; }
+  const addresses = info.addresses.map((address) => `http://${address}:${info.port}/`);
+  $('live-status-details').textContent = `Live page: ${addresses.join(' · ')}${info.lanAccess ? ' · LAN enabled' : ' · this PC only'}`;
+}
+
+async function searchPlugins() {
+  const result = await attempt(() => api.searchPlugins($('plugin-search').value.trim(), { gameVersion: current()?.minecraft }));
+  const root = $('plugin-results');
+  root.replaceChildren();
+  if (!result || !result.hits.length) { root.append(el('p', { class: 'muted small' }, 'No compatible plugins found.')); return; }
+  for (const plugin of result.hits) {
+    const row = el('div', { class: 'tool-row' });
+    const info = el('div', { class: 'tool-info' }, el('strong', {}, plugin.title), el('span', { class: 'muted small' }, `${plugin.author} · ${formatCount(plugin.downloads)} downloads · ${plugin.description || ''}`));
+    const install = el('button', { class: 'btn btn-primary', type: 'button' }, 'Install');
+    install.onclick = async () => {
+      const installed = await attempt(() => api.installPlugin(state.selectedId, plugin.id));
+      if (installed) toast(`${installed.filename} installed${installed.needsRestart ? '; restart the server to load it' : ''}.`);
+    };
+    row.append(info, install); root.append(row);
+  }
 }
 
 async function loadFriends() {
@@ -1118,7 +1583,9 @@ function classifyLine(line) {
 function appendConsole(line) {
   const c = $('console');
   const atBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 40;
-  c.append(el('div', { class: classifyLine(line) }, line.text));
+  const node = el('div', { class: classifyLine(line) }, line.text);
+  node.hidden = Boolean($('console-search') && $('console-search').value && !String(line.text).toLowerCase().includes($('console-search').value.toLowerCase()));
+  c.append(node);
   while (c.childElementCount > MAX_CONSOLE_LINES) c.firstChild.remove();
   if (atBottom) c.scrollTop = c.scrollHeight;
 }
@@ -1128,13 +1595,19 @@ async function loadSettings() {
   if (!s) return;
   $('set-name').value = s.name;
   setupRamSlider($('set-ram'), $('set-ram-label'), s.memoryMb);
+  $('set-auto-restart').checked = s.autoRestart !== false;
   const props = (await attempt(() => api.getProperties(s.id))) || {};
   const has = Object.keys(props).length > 0;
   $('set-motd').value = props.motd || '';
   $('set-maxplayers').value = props['max-players'] || '';
   $('set-port').value = props['server-port'] || '';
   $('set-difficulty').value = props.difficulty || 'easy';
-  for (const id of ['set-motd', 'set-maxplayers', 'set-port', 'set-difficulty']) $(id).disabled = !has;
+  $('set-spawn-protection').value = props['spawn-protection'] || '16';
+  $('set-gamemode').value = props.gamemode || 'survival';
+  $('set-pvp').checked = props.pvp !== 'false';
+  $('set-command-blocks').checked = props['enable-command-block'] === 'true';
+  $('set-force-gamemode').checked = props['force-gamemode'] === 'true';
+  for (const id of ['set-motd', 'set-maxplayers', 'set-port', 'set-difficulty', 'set-spawn-protection', 'set-gamemode', 'set-pvp', 'set-command-blocks', 'set-force-gamemode']) $(id).disabled = !has;
   $('settings-hint').classList.toggle('hidden', has);
   $('settings-saved').textContent = '';
   renderOnlineBox();
@@ -1144,13 +1617,20 @@ async function saveSettings(event) {
   event.preventDefault();
   const id = state.selectedId;
   const ok = await attempt(async () => {
-    await api.update(id, { name: $('set-name').value, memoryMb: Number($('set-ram').value) });
+    await api.update(id, { name: $('set-name').value, memoryMb: Number($('set-ram').value), autoRestart: $('set-auto-restart').checked });
     if (!$('set-motd').disabled) {
       const port = Number($('set-port').value);
       const maxPlayers = Number($('set-maxplayers').value);
-      const patch = { motd: $('set-motd').value.replace(/[\r\n]/g, ' '), difficulty: $('set-difficulty').value };
+      const spawnProtection = Number($('set-spawn-protection').value);
+      const patch = {
+        motd: $('set-motd').value.replace(/[\r\n]/g, ' '), difficulty: $('set-difficulty').value,
+        gamemode: $('set-gamemode').value, pvp: String($('set-pvp').checked),
+        'enable-command-block': String($('set-command-blocks').checked),
+        'force-gamemode': String($('set-force-gamemode').checked),
+      };
       if (Number.isInteger(port) && port >= 1024 && port <= 65535) patch['server-port'] = port;
       if (Number.isInteger(maxPlayers) && maxPlayers > 0) patch['max-players'] = maxPlayers;
+      if (Number.isInteger(spawnProtection) && spawnProtection >= 0 && spawnProtection <= 1000) patch['spawn-protection'] = spawnProtection;
       await api.setProperties(id, patch);
     }
     return true;
@@ -1231,13 +1711,207 @@ function wire() {
     await attempt(() => api.copy($('console').innerText));
     toast('Console log copied');
   };
+  $('console-search').oninput = () => {
+    const query = $('console-search').value.toLowerCase();
+    for (const line of $('console').children) line.hidden = Boolean(query && !line.textContent.toLowerCase().includes(query));
+  };
+  $('copy-filtered-log').onclick = async () => {
+    const text = [...$('console').children].filter((line) => !line.hidden).map((line) => line.innerText).join('\n');
+    await attempt(() => api.copy(text));
+    toast('Visible console lines copied');
+  };
+  $('backup-now').onclick = async () => {
+    const button = $('backup-now');
+    button.disabled = true;
+    if (await attempt(() => api.createBackup(state.selectedId, 'Manual restore point'))) toast('Restore point saved.');
+    await loadBackupsTasks();
+    button.disabled = false;
+  };
+  $('backup-settings-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const saved = await attempt(() => api.setBackupSettings(state.selectedId, {
+      retention: Number($('backup-retention').value),
+      include: $('backup-include').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean),
+      exclude: $('backup-exclude').value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean),
+    }));
+    if (saved) $('backup-settings-status').textContent = 'Saved';
+    await loadBackupsTasks();
+  };
+  $('task-type').onchange = updateTaskFields;
+  $('task-frequency').onchange = updateTaskFields;
+  $('task-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const next = {
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: $('task-name').value.trim(), type: $('task-type').value,
+      time: $('task-time').value, frequency: $('task-frequency').value,
+      dayOfWeek: Number($('task-day').value), warningMinutes: Number($('task-warning').value),
+      command: $('task-command').value.trim(), chainTaskId: $('task-chain').value || null, enabled: true,
+    };
+    const saved = await attempt(() => api.saveTasks(state.selectedId, [...state.tasks, next]));
+    if (saved) {
+      $('task-name').value = '';
+      $('task-command').value = '';
+      toast('Scheduled task added.');
+      await loadBackupsTasks();
+    }
+  };
+  $('file-up').onclick = () => {
+    if (state.fileDir !== '.') state.fileDir = state.fileDir.split('/').slice(0, -1).join('/') || '.';
+    loadFiles();
+  };
+  $('file-refresh').onclick = loadFiles;
+  $('file-upload').onclick = async () => {
+    if (await attempt(() => api.uploadServerFiles(state.selectedId, state.fileDir))) { toast('Files uploaded.'); loadFiles(); }
+  };
+  $('file-new-folder').onclick = async () => {
+    const name = await fileNameDialog('Create folder');
+    if (name && await attempt(() => api.createServerFolder(state.selectedId, state.fileDir, name))) loadFiles();
+  };
+  $('file-editor-close').onclick = () => { $('file-editor').classList.add('hidden'); state.fileEditorPath = null; };
+  $('file-editor-save').onclick = async () => {
+    if (!state.fileEditorPath) return;
+    const saved = await attempt(() => api.writeServerFile(state.selectedId, state.fileEditorPath, $('file-editor-content').value));
+    if (saved !== undefined) $('file-editor-status').textContent = 'Saved';
+  };
   $('check-btn').onclick = checkProfile;
   $('export-cf').onclick = () => exportPack('cf');
   $('export-mrpack').onclick = () => exportPack('mrpack');
   $('settings-form').onsubmit = saveSettings;
+  $('software-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const software = $('software-type').value;
+    const minecraft = $('software-version').value;
+    if (!minecraft) return;
+    const confirmed = await confirmDialog(`Switch ${current()?.name} to ${software} on Minecraft ${minecraft}? A restore point will be saved first. The server must be stopped, and existing mods may be moved aside if they do not match.`, { title: 'Switch server software?', confirmText: 'Save restore point and switch', danger: false });
+    if (!confirmed) return;
+    $('software-status').textContent = 'Saving restore point and preparing server files…';
+    $('software-form').querySelector('button[type="submit"]').disabled = true;
+    const result = await attempt(() => api.changeSoftware(state.selectedId, software, minecraft));
+    $('software-form').querySelector('button[type="submit"]').disabled = false;
+    $('software-status').textContent = result ? `Ready to start on ${software} ${minecraft}.` : '';
+    if (result) { toast('Server software switched.'); await refreshServers(); await loadTools(); }
+  };
+  $('plugin-search-form').onsubmit = (e) => { e.preventDefault(); searchPlugins(); };
+  $('pack-update-check').onclick = async () => {
+    $('pack-update-check').disabled = true;
+    const diff = await attempt(() => api.comparePackUpdate(state.selectedId));
+    $('pack-update-check').disabled = false;
+    if (!diff) return;
+    state.packDiff = diff;
+    const root = $('pack-update-diff');
+    root.replaceChildren();
+    if (diff.upToDate) { root.append(el('p', {}, 'This server already has the latest available modpack version.')); $('pack-update-apply').classList.add('hidden'); return; }
+    root.append(el('p', {}, `Version ${diff.current || 'current'} → ${diff.latest}: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.changed.length} changed.`));
+    const files = [...diff.added.map((file) => `+ ${file}`), ...diff.removed.map((file) => `− ${file}`), ...diff.changed.map((file) => `~ ${file}`)].slice(0, 40);
+    if (files.length) root.append(el('pre', { class: 'muted small' }, files.join('\n')));
+    if (diff.added.length + diff.removed.length + diff.changed.length > files.length) root.append(el('p', { class: 'muted small' }, `${diff.added.length + diff.removed.length + diff.changed.length - files.length} more changes`));
+    $('pack-update-apply').classList.remove('hidden');
+  };
+  $('pack-update-apply').onclick = async () => {
+    const diff = state.packDiff;
+    if (!diff || diff.upToDate) return;
+    const confirmed = await confirmDialog(`Update the server modpack from ${diff.current} to ${diff.latest}? A restore point will be created before pack files are replaced. Stop the server first if it is running.`, { title: 'Update modpack?', confirmText: 'Back up and update', danger: false });
+    if (!confirmed) return;
+    $('pack-update-apply').disabled = true;
+    const result = await attempt(() => api.updatePack(state.selectedId, diff.versionId));
+    $('pack-update-apply').disabled = false;
+    if (result) { toast(`Updated to modpack ${result.version}; restore point ${result.backup.id} saved.`); state.packDiff = null; await refreshServers(); await loadTools(); }
+  };
+  $('disk-warning-save').onclick = async () => {
+    const saved = await attempt(() => api.setDiskWarning(state.selectedId, Number($('disk-warning-limit').value)));
+    if (saved) { toast(`Disk warning set to ${saved} GB.`); updateMetrics(); }
+  };
+  $('bedrock-install').onclick = async () => {
+    const confirmed = await confirmDialog('Install Geyser and Floodgate on this Paper server? The server must be stopped. A restore point will be saved first.', { title: 'Set up Bedrock cross-play?', confirmText: 'Back up and install', danger: false });
+    if (!confirmed) return;
+    $('bedrock-install').disabled = true;
+    const result = await attempt(() => api.installBedrockBridge(state.selectedId));
+    $('bedrock-install').disabled = false;
+    if (result) $('bedrock-status').textContent = `Installed ${result.geyser.filename} and ${result.floodgate.filename}. Start the server, then set up UDP port 19132 using the Geyser guide.`;
+  };
+  $('share-status-page').onclick = async () => {
+    const file = await attempt(() => api.exportStatusPage(state.selectedId));
+    if (file) toast('Status page exported. Share the HTML file or upload it to a website.');
+  };
+  $('live-status-start').onclick = async () => {
+    $('live-status-start').disabled = true;
+    const info = await attempt(() => api.startStatusPage(state.selectedId, { lanAccess: $('status-lan').checked }));
+    $('live-status-start').disabled = false;
+    if (info) { state.liveStatus = info; renderLiveStatus(); toast('Live status page is running.'); }
+  };
+  $('live-status-stop').onclick = async () => {
+    if (!await confirmDialog('Stop the live status page? Friends will no longer be able to open it.', { title: 'Stop status page?', confirmText: 'Stop status page', danger: true })) return;
+    if (await attempt(() => api.stopStatusPage(state.selectedId))) { state.liveStatus = null; renderLiveStatus(); toast('Live status page stopped.'); }
+  };
+  $('live-status-open').onclick = () => attempt(() => api.openStatusPage(state.selectedId));
+  $('live-status-copy').onclick = async () => {
+    if (!state.liveStatus) return;
+    const url = state.liveStatus.addresses.map((address) => `http://${address}:${state.liveStatus.port}/`).join('\n');
+    if (await attempt(() => api.copy(url))) toast('Live page address copied.');
+  };
+  $('copy-join-info').onclick = async () => {
+    const server = current();
+    const info = await attempt(() => api.joinInfo(state.selectedId));
+    if (!server || !info) return;
+    const publicAddress = state.tunnels[state.selectedId]?.address;
+    const addresses = [...new Set([publicAddress, ...(info.lan || []).map((entry) => entry.address), info.local].filter(Boolean))];
+    const instructions = [`${server.name} — Minecraft Java Edition`, `Version: ${server.minecraft || 'see host'}`, `Join address${addresses.length > 1 ? 'es' : ''}: ${addresses.join(', ')}`, ...(server.loader && server.loader !== 'vanilla' ? [`Mods: ${server.loader} ${server.loaderVersion || ''}; install the same modpack as the host.`] : [])].join('\n');
+    if (await attempt(() => api.copy(instructions)) !== undefined) toast('Join instructions copied.');
+  };
+  $('notify-save').onclick = async () => {
+    const saved = await attempt(() => api.setNotificationSettings({ start: $('notify-start').checked, stop: $('notify-stop').checked, crash: $('notify-crash').checked, attention: $('notify-attention').checked }));
+    if (saved) toast('Notification settings saved.');
+  };
+  $('quick-command-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const label = $('quick-command-name').value.trim();
+    const command = $('quick-command-text').value.trim().replace(/^\//, '');
+    if (!label || !command) return;
+    const updated = await attempt(() => api.setCommandButtons(state.selectedId, [...state.commandButtons, { id: `cmd-${Date.now()}`, label, command }]));
+    if (updated) { state.commandButtons = updated; renderQuickCommands(); $('quick-command-name').value = ''; $('quick-command-text').value = ''; }
+  };
+  $('sftp-start').onclick = async () => {
+    const port = Number($('sftp-port').value);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) { toast('Choose a port from 1024 to 65535.', true); return; }
+    $('sftp-start').disabled = true;
+    const info = await attempt(() => api.sftpStart(state.selectedId, { port, lanAccess: $('sftp-lan').checked }));
+    $('sftp-start').disabled = false;
+    if (info) { state.sftpCredentials = info; renderSftp(info); toast('SFTP is running. Save the generated password before closing this screen.'); }
+  };
+  $('sftp-stop').onclick = async () => {
+    if (!await confirmDialog('Disconnect all SFTP clients and stop access to the server folder?', { title: 'Stop SFTP?', confirmText: 'Stop SFTP', danger: true })) return;
+    const stopped = await attempt(() => api.sftpStop(state.selectedId));
+    if (stopped) { state.sftpCredentials = null; renderSftp(null); toast('SFTP stopped.'); }
+  };
+  $('sftp-copy').onclick = async () => {
+    const info = state.sftpCredentials;
+    if (!info) return;
+    const lines = [`SFTP host: ${info.addresses.join(', ')}`, `Port: ${info.port}`, `Username: ${info.username}`, `Password: ${info.password}`, `Host key fingerprint: ${info.fingerprint}`, 'Remote folder: /'];
+    if (await attempt(() => api.copy(lines.join('\n')))) toast('SFTP connection details copied.');
+  };
+  $('cohost-create-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const permissions = [...document.querySelectorAll('.cohost-permission:checked')].map((input) => input.value);
+    const result = await attempt(() => api.createCohost({ username: $('cohost-new-name').value.trim(), password: $('cohost-new-password').value, permissions, twoFactor: $('cohost-two-factor').checked }));
+    if (!result) return;
+    $('cohost-new-password').value = '';
+    const secret = $('cohost-secret');
+    secret.classList.remove('hidden');
+    secret.replaceChildren(el('strong', {}, `Account ${result.username} created.`), el('p', {}, result.twoFactorSecret ? `Save this authenticator secret now: ${result.twoFactorSecret}. It will only be shown once. Add it to an authenticator app before the co-host signs in.` : 'Give the co-host their username and temporary password securely.'));
+    await loadCohostUi();
+  };
+  $('cohost-login-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const result = await attempt(() => api.loginCohost({ username: $('cohost-login-name').value.trim(), password: $('cohost-login-password').value, code: $('cohost-login-code').value }));
+    if (result) { $('cohost-login-password').value = ''; $('cohost-login-code').value = ''; await loadCohostUi(); toast(`Signed in as ${result.username}.`); }
+  };
+  $('cohost-logout').onclick = async () => { await attempt(() => api.logoutCohost()); await loadCohostUi(); toast('Signed out of the co-host account.'); };
   $('open-folder').onclick = () => attempt(() => api.openFolder(state.selectedId));
   $('playit-unlink').onclick = async () => {
-    if (confirm('Disconnect playit.gg from this PC? Friends will not be able to join from other networks until you connect it again.')) {
+    if (await confirmDialog('Friends will not be able to join from other networks until you connect it again.', {
+      title: 'Disconnect playit.gg?', confirmText: 'Disconnect',
+    })) {
       await attempt(() => api.playitUnlink());
     }
   };
@@ -1262,7 +1936,9 @@ function wire() {
   };
   $('wl-enabled').onchange = async (e) => {
     const on = e.target.checked;
-    if (!on && !confirm('Turn off the whitelist? Anyone who has the server address will be able to join.')) {
+    if (!on && !(await confirmDialog('Anyone who has the server address will be able to join.', {
+      title: 'Turn off the whitelist?', confirmText: 'Turn off whitelist',
+    }))) {
       e.target.checked = true;
       return;
     }
@@ -1290,6 +1966,7 @@ function wire() {
   api.onConsole((id, line) => {
     if (id === state.selectedId) appendConsole(line);
   });
+  api.onAuthChanged((auth) => { state.auth = auth; if (!$('tab-tools').classList.contains('hidden')) loadTools(); });
   api.onInstall((id, event) => {
     const info = state.install[id] || (state.install[id] = { step: 0 });
     if (event.progress) Object.assign(info, event.progress);
@@ -1303,12 +1980,20 @@ function wire() {
   api.onStatus(async (id, status) => {
     const s = state.servers.find((x) => x.id === id);
     if (s) s.status = status;
+    if (status === 'starting' && !state.startup[id]) state.startup[id] = { label: 'Preparing server startup', startedAt: Date.now() };
+    if (status === 'running' || status === 'stopped') delete state.startup[id];
     if (status === 'stopped') await refreshServers();
     renderServerList();
     if (s && id === state.selectedId) {
       renderServer(s);
       if (!$('tab-world').classList.contains('hidden')) loadWorld();
     }
+  });
+  api.onStartup((id, startup) => {
+    if (startup.phase === 'ready' || startup.phase === 'failed' || startup.phase === 'stopping') delete state.startup[id];
+    else state.startup[id] = startup;
+    const s = state.servers.find((server) => server.id === id);
+    if (s && id === state.selectedId) renderStatus(s);
   });
   api.onPlayers((id, players) => {
     state.players[id] = players;
@@ -1333,11 +2018,19 @@ function wire() {
   api.onExport((id, p) => {
     if (id === state.selectedId) $('export-status').textContent = `Building the pack… ${p.done} of ${p.total} files`;
   });
+  api.onBackup((id) => { if (id === state.selectedId) loadBackupsTasks(); });
+  api.onTask((id) => { if (id === state.selectedId) loadBackupsTasks(); });
   api.onServersChanged(() => refreshServers());
 }
 
 async function init() {
   wire();
+  setInterval(() => {
+    const s = current();
+    if (s && s.status === 'starting') renderStartup(s.id);
+  }, 1000);
+  const auth = await attempt(() => api.cohostStatus());
+  if (auth) { state.auth = auth; await loadCohostUi(); }
   state.totalMemoryMb = (await attempt(() => api.totalMemoryMb())) || 8192;
   state.playit = (await attempt(() => api.playitStatus())) || state.playit;
   renderPlayitPill();

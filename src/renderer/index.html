@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net data:; style-src 'self'; script-src 'self'" />
+        content="default-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net https://mcasset.cloud https://project-crafting.github.io data:; style-src 'self'; script-src 'self'" />
   <title>Self-Host MC</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -144,6 +144,11 @@
             <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
             <div id="progress-label" class="muted small"></div>
           </div>
+          <div id="startup-progress" class="startup-progress hidden" aria-live="polite">
+            <div class="startup-meta"><span id="startup-label">Starting Minecraft server</span><span id="startup-elapsed" class="muted small">00:00</span></div>
+            <div class="progress" role="progressbar" aria-label="Server startup progress"><div id="startup-progress-bar" class="progress-bar indeterminate"></div></div>
+            <div id="startup-guidance" class="muted small">Large Forge packs can take several minutes. Check Console for detailed startup output.</div>
+          </div>
           <div id="players" class="players hidden"></div>
         </div>
         <div class="status-actions">
@@ -167,6 +172,9 @@
         <button class="tab" data-tab="players">Players</button>
         <button class="tab" data-tab="world">World</button>
         <button class="tab" data-tab="console">Console</button>
+        <button class="tab" data-tab="backups">Backups & tasks</button>
+        <button class="tab" data-tab="files">Files</button>
+        <button class="tab" data-tab="tools">Tools</button>
         <button class="tab" data-tab="settings">Settings</button>
       </nav>
 
@@ -283,6 +291,7 @@
       </div>
 
       <div id="tab-console" class="tab-panel hidden">
+        <div class="row wrap console-tools"><input id="console-search" type="search" placeholder="Search console" aria-label="Search console" /><button id="copy-filtered-log" class="btn">Copy visible lines</button></div>
         <pre id="console" class="console"></pre>
         <form id="command-form" class="command">
           <span class="prompt">&gt;</span>
@@ -292,12 +301,100 @@
         </form>
       </div>
 
+      <div id="tab-backups" class="tab-panel hidden">
+        <div class="card">
+          <div class="row wrap">
+            <div><h3>Backups</h3><p class="muted small">Create a restore point before risky changes. Restoring also saves a backup of the current files first.</p></div>
+            <span class="spacer"></span>
+            <button id="backup-now" class="btn btn-primary">Save restore point</button>
+          </div>
+          <div id="backup-list" class="backup-list"></div>
+        </div>
+        <form id="backup-settings-form" class="card form">
+          <h3>Backup contents and retention</h3>
+          <label>Keep this many newest backups <input id="backup-retention" type="number" min="1" max="100" value="5" /></label>
+          <label>Include only these paths (one per line; blank means all server files)
+            <textarea id="backup-include" rows="3" placeholder="world\nserver.properties"></textarea>
+          </label>
+          <label>Exclude paths (one per line)
+            <textarea id="backup-exclude" rows="3" placeholder="logs\ncrash-reports"></textarea>
+          </label>
+          <div class="row"><button class="btn btn-primary" type="submit">Save backup settings</button><span id="backup-settings-status" class="muted small"></span></div>
+        </form>
+        <div class="card">
+          <h3>Scheduled tasks</h3>
+          <p class="muted small">Run backups, restarts, server commands, or start/stop actions daily or weekly. A task can run another task after it succeeds.</p>
+          <form id="task-form" class="form task-form">
+            <div class="grid-2">
+              <label>Task name <input id="task-name" type="text" maxlength="64" placeholder="Nightly backup" required /></label>
+              <label>Action
+                <select id="task-type"><option value="backup">Create backup</option><option value="restart">Restart server</option><option value="start">Start server</option><option value="stop">Stop server</option><option value="command">Run command</option></select>
+              </label>
+              <label>Time <input id="task-time" type="time" value="03:00" required /></label>
+              <label>Repeat <select id="task-frequency"><option value="daily">Every day</option><option value="weekly">Every week</option></select></label>
+              <label id="task-day-wrap" class="hidden">Day of week
+                <select id="task-day"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select>
+              </label>
+              <label id="task-warning-wrap" class="hidden">Restart warning (minutes) <input id="task-warning" type="number" min="0" max="60" value="5" /></label>
+              <label id="task-command-wrap" class="hidden">Command <input id="task-command" type="text" placeholder="say Server event starts soon" /></label>
+              <label>After success, run
+                <select id="task-chain"><option value="">No follow-up</option></select>
+              </label>
+            </div>
+            <button class="btn btn-primary" type="submit">Add scheduled task</button>
+          </form>
+          <div id="task-list" class="task-list"></div>
+        </div>
+      </div>
+
+      <div id="tab-files" class="tab-panel hidden">
+        <div class="card">
+          <div class="row wrap">
+            <h3>Server files</h3><span class="spacer"></span>
+            <button id="file-up" class="btn" type="button">Up one folder</button>
+            <button id="file-refresh" class="btn" type="button">Refresh</button>
+            <button id="file-new-folder" class="btn" type="button">New folder</button>
+            <button id="file-upload" class="btn" type="button">Upload</button>
+          </div>
+          <div id="file-breadcrumb" class="muted small"></div>
+          <div id="file-list" class="file-list"></div>
+        </div>
+        <div id="file-editor" class="card hidden">
+          <div class="row"><h3 id="file-editor-title">Edit file</h3><span class="spacer"></span><button id="file-editor-close" class="btn btn-ghost" type="button">Close</button></div>
+          <textarea id="file-editor-content" rows="20" spellcheck="false"></textarea>
+          <div class="row"><button id="file-editor-save" class="btn btn-primary" type="button">Save file</button><span id="file-editor-status" class="muted small"></span></div>
+        </div>
+      </div>
+
+      <div id="tab-tools" class="tab-panel hidden">
+        <div class="grid-2">
+          <section id="metrics-card" class="card"><div class="row"><h3>Live health</h3><span class="spacer"></span><span id="metrics-updated" class="muted small"></span></div><div id="metrics-grid" class="metric-grid"></div><label class="small">Warn above (GB) <input id="disk-warning-limit" type="number" min="1" max="1000" value="20" /></label> <button id="disk-warning-save" class="btn">Save limit</button><p id="metrics-note" class="muted small"></p></section>
+          <section id="software-card" class="card"><h3>Server software and version</h3><p class="muted small">Switching creates a restore point first. Existing worlds are kept; mods may need to match the new loader and Minecraft version.</p><form id="software-form" class="form"><div class="grid-2"><label>Software<select id="software-type"><option value="vanilla">Vanilla</option><option value="paper">Paper (plugins)</option><option value="fabric">Fabric</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option><option value="quilt">Quilt</option></select></label><label>Minecraft version<select id="software-version"></select></label></div><button class="btn btn-primary" type="submit">Switch software</button><span id="software-status" class="muted small"></span></form></section>
+          <section id="pack-update-card" class="card"><h3>Modpack version changes</h3><p class="muted small">Review added, removed, and changed pack files before applying an update. A backup is created first.</p><button id="pack-update-check" class="btn">Check for modpack updates</button><div id="pack-update-diff" class="muted small"></div><button id="pack-update-apply" class="btn btn-primary hidden">Back up and update</button></section>
+          <section id="plugin-card" class="card"><h3>Plugin catalog</h3><p class="muted small">Search compatible Paper plugins from Modrinth. Installed plugins need a server restart before they load.</p><form id="plugin-search-form" class="row"><input id="plugin-search" type="search" placeholder="Search plugins" /><button class="btn" type="submit">Search</button></form><div id="plugin-results" class="tool-list"></div></section>
+          <section id="bedrock-card" class="card"><h3>Bedrock cross-play setup</h3><p class="muted small">Geyser and Floodgate let Bedrock Edition players join a Paper server. Install both plugins, then forward UDP port 19132 and follow Geyser's generated config.</p><div class="row wrap"><button id="bedrock-install" class="btn">Install Geyser + Floodgate</button><a href="https://geysermc.org/wiki/geyser/setup/" target="_blank" rel="noreferrer">Setup guide</a></div><div id="bedrock-status" class="muted small"></div></section>
+          <section id="tool-share-card" class="card"><h3>Share server status and join steps</h3><p class="muted small">Run an optional live page that refreshes every 10 seconds on your PC or LAN. Remote friends need a router port-forward for port 27892. You can also export a themed HTML snapshot or copy join details.</p><label><input id="status-lan" type="checkbox" /> Let devices on my LAN view the live status page</label><div class="row wrap"><button id="live-status-start" class="btn">Start live page</button><button id="live-status-stop" class="btn btn-danger hidden">Stop live page</button><button id="live-status-open" class="btn hidden">Open live page</button><button id="live-status-copy" class="btn hidden">Copy live page address</button></div><div id="live-status-details" class="muted small"></div><div class="row wrap"><button id="share-status-page" class="btn btn-primary">Export status page</button><button id="copy-join-info" class="btn">Copy join instructions</button></div></section>
+          <section id="notification-card" class="card"><h3>Notifications</h3><p class="muted small">Windows notifications for server state and attention events.</p><div class="check-grid"><label><input id="notify-start" type="checkbox" checked /> Started</label><label><input id="notify-stop" type="checkbox" checked /> Stopped</label><label><input id="notify-crash" type="checkbox" checked /> Crashed</label><label><input id="notify-attention" type="checkbox" checked /> Needs attention</label></div><button id="notify-save" class="btn">Save notifications</button></section>
+          <section id="command-card" class="card"><h3>Reusable command buttons</h3><p class="muted small">Save safe, commonly used server commands for one-click use while the server is online.</p><form id="quick-command-form" class="grid-2"><label>Button name<input id="quick-command-name" maxlength="32" placeholder="Save world" required /></label><label>Command<input id="quick-command-text" maxlength="256" placeholder="save-all" required /></label><button class="btn btn-primary" type="submit">Add command button</button></form><div id="quick-command-list" class="tool-list"></div></section>
+          <section id="activity-card" class="card"><h3>Activity log</h3><p class="muted small">Recent setting, file, backup, and server changes, including who made them.</p><div id="activity-list" class="activity-list"></div></section>
+          <section id="sftp-card" class="card">
+            <h3>SFTP access</h3>
+            <p class="muted small">Start a temporary SFTP service restricted to this server folder. It stops when you stop it or close the app. LAN access is optional; Internet access still requires a router/firewall rule.</p>
+            <div class="row wrap"><label>Port <input id="sftp-port" type="number" min="1024" max="65535" value="2222" /></label><label><input id="sftp-lan" type="checkbox" /> Allow connections from devices on my LAN</label></div>
+            <div class="row wrap"><button id="sftp-start" class="btn btn-primary">Start SFTP</button><button id="sftp-stop" class="btn btn-danger hidden">Stop SFTP</button><button id="sftp-copy" class="btn hidden">Copy connection details</button></div>
+            <div id="sftp-details" class="muted small"></div>
+          </section>
+          <section id="cohost-card" class="card"><div class="row"><h3>Co-host access</h3><span class="spacer"></span><span id="auth-current" class="muted small"></span><button id="cohost-logout" class="btn btn-ghost hidden">Sign out</button></div><div id="cohost-owner-tools"><form id="cohost-create-form" class="form"><div class="grid-2"><label>Username<input id="cohost-new-name" minlength="3" maxlength="24" required /></label><label>Co-host password<input id="cohost-new-password" type="password" minlength="10" required /></label></div><div class="check-grid"><label><input class="cohost-permission" type="checkbox" value="server" checked /> Server overview</label><label><input class="cohost-permission" type="checkbox" value="console" /> Console and commands</label><label><input class="cohost-permission" type="checkbox" value="players" /> Player controls</label><label><input class="cohost-permission" type="checkbox" value="files" /> File manager</label><label><input class="cohost-permission" type="checkbox" value="backups" /> Backups and tasks</label><label><input class="cohost-permission" type="checkbox" value="settings" /> Settings and software</label><label><input class="cohost-permission" type="checkbox" value="tools" /> Admin tools</label><label><input id="cohost-two-factor" type="checkbox" /> Require authenticator code</label></div><button class="btn btn-primary" type="submit">Create co-host account</button></form><div id="cohost-secret" class="hidden"></div><div id="cohost-list" class="tool-list"></div><hr /><h4>Sign in as a co-host on this computer</h4><form id="cohost-login-form" class="form"><div class="grid-2"><label>Username<input id="cohost-login-name" required /></label><label>Password<input id="cohost-login-password" type="password" required /></label><label>Authenticator code (if enabled)<input id="cohost-login-code" inputmode="numeric" autocomplete="one-time-code" /></label></div><button class="btn" type="submit">Sign in</button></form></div></section>
+        </div>
+      </div>
+
       <div id="tab-settings" class="tab-panel hidden">
         <form id="settings-form" class="card form">
           <label>Server name <input id="set-name" type="text" maxlength="64" /></label>
           <label>Memory: <strong id="set-ram-label"></strong>
             <input id="set-ram" type="range" min="2048" step="512" />
           </label>
+          <label><input id="set-auto-restart" type="checkbox" checked /> Restart automatically after a crash</label>
           <div class="grid-2">
             <label>Message shown in the server list <input id="set-motd" type="text" /></label>
             <label>Max players <input id="set-maxplayers" type="number" min="1" max="200" /></label>
@@ -310,6 +407,11 @@
               </select>
             </label>
             <label>Port <input id="set-port" type="number" min="1024" max="65535" /></label>
+            <label>Spawn protection radius <input id="set-spawn-protection" type="number" min="0" max="1000" /></label>
+            <label>Default game mode<select id="set-gamemode"><option value="survival">Survival</option><option value="creative">Creative</option><option value="adventure">Adventure</option><option value="spectator">Spectator</option></select></label>
+            <label><input id="set-pvp" type="checkbox" /> Player versus player damage</label>
+            <label><input id="set-command-blocks" type="checkbox" /> Enable command blocks</label>
+            <label><input id="set-force-gamemode" type="checkbox" /> Force default game mode on join</label>
           </div>
           <div class="muted small" id="settings-hint">Game settings appear after the server has started once. Changes apply the next time it starts.</div>
           <div class="row">
@@ -352,6 +454,25 @@
         <button id="rename-cancel" type="button" class="btn btn-ghost">Cancel</button>
         <button type="submit" class="btn btn-primary">Rename</button>
       </div>
+    </form>
+  </div>
+
+  <div id="confirm-modal" class="modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="modal-box confirm-box">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-message" class="confirm-message"></p>
+      <div class="row end">
+        <button id="confirm-cancel" type="button" class="btn btn-ghost">Cancel</button>
+        <button id="confirm-accept" type="button" class="btn btn-danger">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="file-name-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="file-name-title">
+    <form id="file-name-form" class="modal-box">
+      <h2 id="file-name-title">Name</h2>
+      <input id="file-name-input" type="text" maxlength="180" required />
+      <div class="row end"><button id="file-name-cancel" type="button" class="btn btn-ghost">Cancel</button><button class="btn btn-primary" type="submit">Save</button></div>
     </form>
   </div>
 

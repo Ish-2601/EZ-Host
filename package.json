@@ -13,7 +13,8 @@
   "author": "Ish-2601",
   "license": "MIT",
   "dependencies": {
-    "adm-zip": "^0.6.1"
+    "adm-zip": "^0.6.1",
+    "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "electron": "^44.9.0",

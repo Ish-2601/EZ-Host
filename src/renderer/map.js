@@ -13,7 +13,7 @@ const WorldMap = (() => {
     style: 'terrain', // 'terrain' | 'biomes'
     refreshEvery: 10, // seconds; 0 = only when Refresh is clicked
     // Structure types hidden on the map; click them in the legend to show them.
-    hiddenStructures: new Set(['Trial chambers', 'Ruined portal', 'Ocean ruin']),
+    hiddenStructures: new Set(),
     forced: [],
     players: [],
     heads: new Map(),
@@ -148,11 +148,8 @@ const WorldMap = (() => {
     [/swamp_hut|witch/, 'W', '#7cb342', 'Witch hut'],
     [/igloo/, 'I', '#e0f7fa', 'Igloo'],
     [/ancient_city/, 'A', '#26a69a', 'Ancient city'],
-    [/trial_chambers/, 'C', '#ff8a65', 'Trial chambers'],
     [/stronghold/, 'S', '#b39ddb', 'Stronghold'],
-    [/ruined_portal/, 'R', '#9575cd', 'Ruined portal'],
     [/shipwreck/, 'H', '#90a4ae', 'Shipwreck'],
-    [/ocean_ruin/, 'U', '#4dd0e1', 'Ocean ruin'],
     [/buried_treasure/, '$', '#ffd54f', 'Buried treasure'],
     [/fortress/, 'F', '#e57373', 'Nether fortress'],
     [/bastion/, 'B', '#424242', 'Bastion'],
@@ -162,6 +159,7 @@ const WorldMap = (() => {
 
   function structureStyle(id) {
     if (/mineshaft|nether_fossil/.test(id)) return null; // too many to be useful
+    if (/trial_chambers|ruined_portal|ocean_ruin/.test(id)) return null;
     const found = STRUCTURES.find(([re]) => re.test(id));
     if (found) return { letter: found[1], color: found[2], label: found[3] };
     // Modded structures: a gray marker labelled with the structure's name.

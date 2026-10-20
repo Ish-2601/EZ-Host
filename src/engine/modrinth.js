@@ -38,6 +38,40 @@ async function searchModpacks(query = '', { limit = 20, offset = 0 } = {}) {
   };
 }
 
+/** Search server plugins, optionally narrowed to Paper and the server version. */
+async function searchPlugins(query = '', { limit = 20, offset = 0, gameVersion } = {}) {
+  const facets = [['all_project_types:plugin'], ['categories:paper'], ['environment:server_only', 'environment:server_only_client_optional', 'environment:dedicated_server_only']];
+  if (gameVersion) facets.push([`versions:${gameVersion}`]);
+  const params = new URLSearchParams({ query, facets: JSON.stringify(facets), limit: String(limit), offset: String(offset), index: query ? 'relevance' : 'downloads' });
+  const data = await getJson(`${API}/search?${params}`);
+  return {
+    total: data.total_hits,
+    hits: data.hits.map((h) => ({ id: h.project_id, slug: h.slug, title: h.title, description: h.description, author: h.author, iconUrl: h.icon_url || null, downloads: h.downloads })),
+  };
+}
+
+async function getPluginVersion(projectId, gameVersion) {
+  const params = new URLSearchParams({ loaders: JSON.stringify(['paper']) });
+  if (gameVersion) params.set('game_versions', JSON.stringify([gameVersion]));
+  const versions = await getJson(`${API}/project/${encodeURIComponent(projectId)}/version?${params}`);
+  const version = versions.find((v) => v.version_type === 'release') || versions[0];
+  if (!version) return null;
+  const file = version.files.find((f) => f.primary) || version.files[0];
+  if (!file) return null;
+  return {
+    id: version.id, name: version.name, versionNumber: version.version_number,
+    file: { url: file.url, filename: file.filename, hashes: file.hashes },
+    requiredProjects: (version.dependencies || []).filter((item) => item.dependency_type === 'required' && item.project_id).map((item) => item.project_id),
+  };
+}
+
+async function getLoaderVersions(loader, minecraft) {
+  const params = new URLSearchParams();
+  if (minecraft) params.set('game_versions', JSON.stringify([minecraft]));
+  const versions = await getJson(`${API}/tag/loader/${encodeURIComponent(loader)}${params.size ? `?${params}` : ''}`);
+  return versions.filter((item) => item.stable !== false).map((item) => item.version);
+}
+
 async function getProject(idOrSlug) {
   const p = await getJson(`${API}/project/${encodeURIComponent(idOrSlug)}`);
   return {
@@ -132,4 +166,4 @@ async function projectIdsForHashes(sha1Hashes) {
   return new Set(Object.values(await res.json()).map((v) => v.project_id));
 }
 
-module.exports = { searchModpacks, getProject, getModpackVersions, findClientOnlyFiles, getCompatibleVersion, projectIdsForHashes };
+module.exports = { searchModpacks, searchPlugins, getPluginVersion, getLoaderVersions, getProject, getModpackVersions, findClientOnlyFiles, getCompatibleVersion, projectIdsForHashes };
