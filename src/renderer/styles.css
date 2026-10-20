@@ -408,6 +408,13 @@ html:not([data-game="zomboid"]) .zb-only { display: none !important; }
 .accent-swatch.white span { background: #f1f3f5; }
 html:not([data-theme="hud"]) .hud-only-option { display: none; }
 html:not([data-theme="hud"]) .accent-swatch:is(.orange, .red, .white) { display: none; }
+/* Required settings before creating a server */
+.required-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.required-list:empty { display: none; }
+.required-list li { color: var(--danger); font-size: 13px; }
+.required-list li::before { content: '! '; font-weight: 700; }
+.req { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; margin-left: 6px; }
+input.missing { border-color: var(--danger) !important; }
 /* Game sections */
 .game-switch { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 4px 0 12px; }
 .game-btn { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; text-align: left; }

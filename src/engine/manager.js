@@ -436,6 +436,8 @@ class ServerManager extends EventEmitter {
   }
 
   async createConfig(name, memoryMb, source) {
+    name = String(name || '').trim().slice(0, 64);
+    if (!name) throw new Error('Give the server a name');
     const id = this.newId(name);
     const port = this.freePort(id);
     await fsp.mkdir(this.serverDir(id), { recursive: true });

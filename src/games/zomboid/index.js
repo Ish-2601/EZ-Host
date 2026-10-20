@@ -174,7 +174,11 @@ class ZomboidGame {
   /** Create a Zomboid server, optionally copying one of the host's own server configs. */
   async create({ name, memoryMb = 6144, copyFrom = null, collectionId = null, settings = null, preset = null, options = null }) {
     if (copyFrom && !this.localConfigs().some((c) => c.name === copyFrom)) throw new Error('That Zomboid server config was not found');
-    const id = await this.m.createConfig(name || copyFrom || 'Zomboid server', memoryMb, { type: 'zomboid', copyFrom });
+    // What Zomboid needs to start: a name, a player limit and (for a new world) a map.
+    if (!String(name || '').trim()) throw new Error('Give the server a name');
+    if (settings && settings.MaxPlayers !== undefined && !(Number(settings.MaxPlayers) >= 1 && Number(settings.MaxPlayers) <= 100)) throw new Error('Max players must be between 1 and 100');
+    if (!copyFrom && settings && typeof settings.Map === 'string' && !settings.Map.trim()) throw new Error('Choose a map');
+    const id = await this.m.createConfig(name, memoryMb, { type: 'zomboid', copyFrom });
     const ports = this.freePorts(id);
     // Server names end up in file names; keep them plain.
     const serverName = `selfhost_${id.replace(/[^a-z0-9]/g, '').slice(-10)}`;

@@ -72,7 +72,7 @@
         </section>
         <section class="card form">
           <h3><span class="step-dot active">4</span> Server settings</h3>
-          <label>Server name (shown to players) <input id="zbnew-name" type="text" maxlength="64" required /></label>
+          <label>Server name (shown to players) <span class="req">required</span> <input id="zbnew-name" type="text" maxlength="64" required placeholder="Give your server a name" /></label>
           <div class="zbnew-fresh-only grid-2">
             <label>Max players <input id="zbnew-max" type="number" min="1" max="100" value="16" /></label>
             <label>Server password (optional) <input id="zbnew-pass" type="text" maxlength="64" placeholder="No password" /></label>
@@ -112,7 +112,8 @@
           <div class="ram-suggest" id="zbnew-ram-suggest"></div>
         </section>
         <p class="muted small zbnew-fresh-only">World rules (zombie count and speed, loot, day length, start date and about 270 more) come next: the server opens on its World rules page before its first start.</p>
-        <div class="row"><button class="btn btn-primary btn-lg" type="submit">Create server</button><span id="zbnew-summary" class="muted small"></span></div>
+        <ul id="zbnew-required" class="required-list"></ul>
+        <div class="row"><button id="zbnew-create" class="btn btn-primary btn-lg" type="submit">Create server</button><span id="zbnew-summary" class="muted small"></span></div>
       </form>
     </section>
 
@@ -194,14 +195,15 @@
           <select id="pack-version"></select>
           <span id="version-meta" class="muted small"></span>
         </label>
-        <label>Server name
-          <input id="server-name" type="text" maxlength="64" required />
+        <label>Server name <span class="req">required</span>
+          <input id="server-name" type="text" maxlength="64" required placeholder="Give your server a name" />
         </label>
         <label>Memory for the server: <strong id="ram-label"></strong>
           <input id="server-ram" type="range" min="2048" step="512" />
           <span class="muted small" id="ram-hint"></span>
         </label>
-        <button class="btn btn-primary btn-lg" type="submit">Create server</button>
+        <ul id="create-required" class="required-list"></ul>
+        <button id="create-submit" class="btn btn-primary btn-lg" type="submit">Create server</button>
       </form>
     </section>
 

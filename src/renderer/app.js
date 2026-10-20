@@ -389,6 +389,8 @@ async function search(query) {
 
 function openDetails({ title, description, iconUrl, name, ram }) {
   showView('details');
+  delete $('server-name').dataset.touched;
+  setTimeout(checkCreateForm, 0);
   const img = $('detail-icon');
   if (iconUrl) img.src = iconUrl;
   else img.src = 'icon.svg';
@@ -434,6 +436,7 @@ async function chooseModrinthPack(hit) {
   select.disabled = false;
   select.onchange = updateVersionMeta;
   updateVersionMeta();
+  checkCreateForm();
 }
 
 function updateVersionMeta() {
@@ -464,6 +467,7 @@ async function chooseVanilla() {
   };
   select.onchange = syncName;
   syncName();
+  checkCreateForm();
 }
 
 // ---------- Project Zomboid: new server ----------
@@ -495,7 +499,8 @@ async function openZomboidNew() {
   showView('zbnew');
   state.zbNew = { copyFrom: null, collection: null, extra: [], configs: [], preset: 'Apocalypse', presets: [] };
   attempt(() => api.zomboidPresets()).then((p) => { if (state.zbNew) { state.zbNew.presets = p || []; renderZomboidNew(); } });
-  $('zbnew-name').value = 'Zomboid server';
+  $('zbnew-name').value = '';
+  for (const id of ['zbnew-name', 'zbnew-max', 'zbnew-map', 'zbnew-link']) delete $(id).dataset.touched;
   $('zbnew-link').value = '';
   setupRamSlider($('zbnew-ram'), $('zbnew-ram-label'), recommendedZomboidRam(0, 16), $('zbnew-ram-hint'));
   const slide = $('zbnew-ram').oninput;
@@ -536,7 +541,7 @@ function renderZomboidNew() {
       selected: z.copyFrom === c.name,
       onclick: () => {
         z.copyFrom = c.name;
-        if ($('zbnew-name').value === 'Zomboid server') $('zbnew-name').value = c.name;
+        if (!$('zbnew-name').value.trim()) $('zbnew-name').value = c.name;
         renderZomboidNew();
       },
     })));
@@ -555,6 +560,7 @@ function renderZomboidNew() {
     }));
   if (z.found) fill($('zbnew-notes'), z.found.notes.map((n) => el('div', {}, n)));
   zbRamSuggestion();
+  checkZomboidForm();
   $('zbnew-summary').textContent = [
     z.copyFrom ? `Copy of ${z.copyFrom}` : `New world${z.preset ? ` (${(z.presets.find((p) => p.id === z.preset) || {}).name || z.preset})` : ''}`,
     z.collection ? `+ ${z.collection.title} (${z.collection.items} mods)` : null,
@@ -585,10 +591,29 @@ async function useZomboidNewLink() {
   renderZomboidNew();
 }
 
+/** Zomboid will not start without these, so a server cannot be made without them. */
+function checkZomboidForm() {
+  const z = state.zbNew;
+  if (!z) return false;
+  const name = $('zbnew-name');
+  const max = $('zbnew-max');
+  const map = $('zbnew-map');
+  const players = Number(max.value);
+  return requireFields('zbnew-required', 'zbnew-create', [
+    [name.value.trim().length > 0, 'Give the server a name. Zomboid will not start without one.', name],
+    [Boolean(z.copyFrom) || (Number.isInteger(players) && players >= 1 && players <= 100), 'Set max players to a number from 1 to 100.', max],
+    [Boolean(z.copyFrom) || map.value.trim().length > 0, 'Choose a map (Muldraugh, KY is the normal one).', map],
+    [!$('zbnew-link').value.trim(), 'Press "Use this link" for the collection link you pasted, or clear the box.', $('zbnew-link')],
+    [Number($('zbnew-ram').value) >= 2048, 'Give the server at least 2 GB of memory.'],
+  ]);
+}
+
 async function createZomboidServer(event) {
   event.preventDefault();
   const z = state.zbNew;
-  const name = $('zbnew-name').value.trim() || 'Zomboid server';
+  for (const id of ['zbnew-name', 'zbnew-max', 'zbnew-map', 'zbnew-link']) $(id).dataset.touched = '1';
+  if (!checkZomboidForm()) return;
+  const name = $('zbnew-name').value.trim();
   const created = await attempt(() => api.createZomboid({
     name,
     memoryMb: Number($('zbnew-ram').value),
@@ -831,10 +856,38 @@ async function saveWorldRules() {
   }
 }
 
+/**
+ * Show what still has to be filled in before a server can be made, and keep the
+ * Create button off until it is. `checks` is [[ok, message, input?], ...].
+ */
+function requireFields(listId, buttonId, checks) {
+  const missing = checks.filter(([ok]) => !ok);
+  fill($(listId), missing.map(([, text]) => el('li', {}, text)));
+  for (const [ok, , input] of checks) if (input) input.classList.toggle('missing', !ok && input.dataset.touched === '1');
+  $(buttonId).disabled = missing.length > 0;
+  return missing.length === 0;
+}
+
+function checkCreateForm() {
+  const p = state.pending;
+  if (!p) return false;
+  const name = $('server-name');
+  const vanilla = p.kind === 'vanilla';
+  const pack = p.kind === 'modrinth';
+  return requireFields('create-required', 'create-submit', [
+    [name.value.trim().length > 0, 'Give the server a name.', name],
+    [!vanilla || Boolean($('mc-version').value), 'Choose a Minecraft version.'],
+    [!pack || Boolean($('pack-version').value), 'Choose a modpack version.'],
+    [Number($('server-ram').value) >= 2048, 'Give the server at least 2 GB of memory.'],
+  ]);
+}
+
 async function createServer(event) {
   event.preventDefault();
   const p = state.pending;
   if (!p) return;
+  $('server-name').dataset.touched = '1';
+  if (!checkCreateForm()) return;
   const common = { name: $('server-name').value.trim(), memoryMb: Number($('server-ram').value) };
   const created = await attempt(() =>
     p.kind === 'profile' ? api.createFromProfile({ ...common, profileId: p.profile.id })
@@ -3238,6 +3291,10 @@ function wire() {
   $('zb-settings-form').onsubmit = saveZomboidSettings;
   document.querySelectorAll('.game-btn').forEach((b) => (b.onclick = () => setGame(b.dataset.game)));
   $('zbnew-form').onsubmit = createZomboidServer;
+  $('zbnew-form').addEventListener('input', (e) => { if (e.target.id) e.target.dataset.touched = '1'; checkZomboidForm(); });
+  $('zbnew-form').addEventListener('click', () => setTimeout(checkZomboidForm, 0));
+  $('create-form').addEventListener('input', (e) => { if (e.target.id) e.target.dataset.touched = '1'; checkCreateForm(); });
+  $('create-form').addEventListener('change', checkCreateForm);
   for (const id of ['zbnew-link-btn', 'zb-coll-link-btn']) $(id).dataset.label = $(id).textContent;
   $('zbnew-link-btn').onclick = useZomboidNewLink;
   $('zbnew-link').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); useZomboidNewLink(); } };
