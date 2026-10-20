@@ -58,6 +58,7 @@ const CHANNEL_PERMISSION = {
   'settings:notifications': 'settings', 'settings:setNotifications': 'settings',
   'minecraft:versions': 'server',
   'zomboid:localConfigs': 'server', 'servers:createZomboid': 'settings', 'zomboid:settings': 'settings', 'zomboid:saveSettings': 'settings',
+  'zomboid:collections': 'server', 'zomboid:previewCollection': 'server', 'zomboid:installCollection': 'settings', 'zomboid:sandbox': 'settings', 'zomboid:saveSandbox': 'settings',
   'settings:app': 'server', 'settings:setApp': 'settings',
   'mods:overview': 'server', 'mods:setEnabled': 'settings',
   'perf:advice': 'server', 'perf:applySettings': 'settings', 'perf:installMods': 'settings', 'servers:setMemory': 'settings',
@@ -415,6 +416,11 @@ function registerIpc() {
   handle('servers:createZomboid', (opts) => manager.zomboid.create(opts || {}));
   handle('zomboid:settings', (id) => manager.zomboid.settings(id));
   handle('zomboid:saveSettings', (id, values) => manager.zomboid.saveSettings(id, values || {}));
+  handle('zomboid:collections', () => manager.zomboid.listCollections());
+  handle('zomboid:previewCollection', (link) => manager.zomboid.previewCollection(link));
+  handle('zomboid:installCollection', (id, link) => manager.zomboid.installCollection(id, link));
+  handle('zomboid:sandbox', (id) => manager.zomboid.sandbox(id));
+  handle('zomboid:saveSandbox', (id, values) => manager.zomboid.saveSandbox(id, values || {}));
   handle('settings:app', () => manager.appSettings());
   handle('settings:setApp', async (patch) => {
     const next = await manager.setAppSettings(patch || {});

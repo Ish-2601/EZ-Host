@@ -14,6 +14,8 @@ const { ensureSteamCmd, appUpdate } = require('./steamcmd');
 const { ZomboidProcess } = require('./process');
 const zcfg = require('./config');
 const zmods = require('./mods');
+const sandbox = require('./sandbox');
+const workshop = require('./workshop');
 
 const APP_ID = 380870;
 const NAME_RE = /^[A-Za-z0-9_ .-]{1,32}$/;
@@ -27,6 +29,11 @@ class ZomboidGame {
     this.installDir = path.join(manager.paths.root, 'games', 'zomboid-server');
     this.steamcmdDir = path.join(manager.paths.root, 'games', 'steamcmd');
     this.updating = null;
+  }
+
+  /** Workshop mods on this PC: the host's Steam downloads plus ones the app fetched. */
+  workshop() {
+    return zcfg.scanWorkshop([workshop.steamcmdWorkshopRoot(path.join(this.steamcmdDir, 'steamcmd.exe'))]);
   }
 
   cacheDir(id) {
@@ -89,7 +96,7 @@ class ZomboidGame {
   }
 
   /** Create a Zomboid server, optionally copying one of the host's own server configs. */
-  async create({ name, memoryMb = 6144, copyFrom = null }) {
+  async create({ name, memoryMb = 6144, copyFrom = null, collectionId = null, settings = null }) {
     if (copyFrom && !this.localConfigs().some((c) => c.name === copyFrom)) throw new Error('That Zomboid server config was not found');
     const id = await this.m.createConfig(name || copyFrom || 'Zomboid server', memoryMb, { type: 'zomboid', copyFrom });
     const ports = this.freePorts(id);
@@ -127,6 +134,7 @@ class ZomboidGame {
         log(`Copied your "${copyFrom}" settings, mods and world options.`);
       }
       this.applyNetworkSettings(id);
+      if (!copyFrom) await this.prepareFreshWorld(id, { log, progress });
       const config = this.m.readConfig(id);
       const ini = this.ini(id);
       const listOn = this.m.appSettings ? this.m.appSettings().defaultWhitelist : false;
@@ -135,8 +143,15 @@ class ZomboidGame {
         Public: ini.Public || 'false',
         Open: copyFrom && ini.Open ? ini.Open : String(!listOn),
       });
-      await this.m.updateConfig(id, { installed: true, installError: null, packName: copyFrom ? `Copy of ${copyFrom}` : 'Project Zomboid' });
-      log('Install complete. Press Start.');
+      if (settings) this.saveSettings(id, settings);
+      if (collectionId) await this.applyCollection(id, collectionId, { log, progress });
+      await this.m.updateConfig(id, {
+        installed: true,
+        installError: null,
+        packName: copyFrom ? `Copy of ${copyFrom}` : collectionId ? 'Workshop collection' : 'Project Zomboid',
+        worldSetupPending: !copyFrom,
+      });
+      log(copyFrom ? 'Install complete. Press Start.' : 'Install complete. Choose your world rules in Settings, then press Start.');
     })()
       .catch(async (err) => {
         log(`Install failed: ${err.message}`);
@@ -148,6 +163,129 @@ class ZomboidGame {
         this.m.emit('changed');
       });
     return this.m.describe(id);
+  }
+
+  /**
+   * A fresh server has no settings files yet; the game writes them (with every
+   * option and its description) the first time it starts. Start it once, stop
+   * it, and remove the world it made, so the host's choices apply to the real
+   * first world.
+   */
+  async prepareFreshWorld(id, { log = () => {}, progress = () => {} } = {}) {
+    const config = this.m.readConfig(id);
+    log('Creating the world settings files (the server starts once in the background)...');
+    const proc = new ZomboidProcess({
+      installDir: this.installDir,
+      cacheDir: this.cacheDir(id),
+      serverName: config.serverName,
+      memoryMb: Math.min(config.memoryMb, 4096),
+      adminPassword: config.adminPassword,
+    });
+    proc.on('progress', (state) => progress('Preparing world settings', state.percent, 100));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        proc.kill();
+        reject(new Error('The server took too long on its first run'));
+      }, 10 * 60 * 1000);
+      proc.on('status', (status) => {
+        if (status === 'running') proc.stop();
+      });
+      proc.on('exit', () => {
+        clearTimeout(timer);
+        if (fs.existsSync(path.join(this.cacheDir(id), 'Server', `${config.serverName}_SandboxVars.lua`))) resolve();
+        else reject(new Error(proc.failure ? proc.failure.summary : 'The server did not create its settings files'));
+      });
+      proc.start();
+    });
+    // Throw away the throwaway world; keep the settings and the admin account.
+    await fsp.rm(path.join(this.cacheDir(id), 'Saves', 'Multiplayer', config.serverName), { recursive: true, force: true });
+    await fsp.rm(path.join(this.cacheDir(id), 'Saves', 'Multiplayer', `${config.serverName}_player`), { recursive: true, force: true });
+    log('World settings ready.');
+  }
+
+  sandboxFile(id) {
+    const config = this.m.readConfig(id);
+    return path.join(this.cacheDir(id), 'Server', `${config.serverName}_SandboxVars.lua`);
+  }
+
+  /** World rules for the editor: { fields, common }. */
+  sandbox(id) {
+    const fields = sandbox.readSandbox(this.sandboxFile(id));
+    if (!fields) return { fields: [], common: [], missing: true };
+    return { fields, common: sandbox.COMMON.filter((p) => fields.some((f) => f.path === p)) };
+  }
+
+  async saveSandbox(id, values) {
+    const running = Boolean(this.m.processes.get(id) && this.m.processes.get(id).child);
+    if (running) throw new Error('Stop the server before changing world rules');
+    sandbox.writeSandbox(this.sandboxFile(id), values || {});
+    await this.m.updateConfig(id, { worldSetupPending: false });
+    return this.sandbox(id);
+  }
+
+  // ---------- Workshop collections ----------
+
+  listCollections() {
+    return workshop.listCollections();
+  }
+
+  async previewCollection(link) {
+    const id = workshop.parseCollectionLink(link);
+    const items = await workshop.collectionItems(id);
+    const details = await workshop.itemDetails([id]);
+    return { id, title: (details.get(id) || {}).title || `Collection ${id}`, items: items.length };
+  }
+
+  /**
+   * Turn on every mod in a collection: download items this PC does not have
+   * (anonymously), read their mod IDs, and add them to Mods= and WorkshopItems=.
+   */
+  async applyCollection(id, collectionLink, { log = () => {}, progress = () => {} } = {}) {
+    const collectionId = workshop.parseCollectionLink(collectionLink);
+    log('Reading the Workshop collection...');
+    const items = await workshop.collectionItems(collectionId);
+    const have = new Set(this.workshop().map((w) => w.workshopId));
+    const missing = items.filter((w) => !have.has(w));
+    if (missing.length) {
+      const steamcmd = await ensureSteamCmd(this.steamcmdDir, log);
+      log(`Downloading ${missing.length} Workshop item(s) to read their mod IDs...`);
+      await workshop.downloadItems(steamcmd, missing, { log, onProgress: (done, total) => progress('Workshop mods', done, total) });
+    }
+    const byItem = new Map(this.workshop().map((w) => [w.workshopId, w]));
+    const iniFile = this.iniFile(id);
+    const ini = zcfg.readIni(iniFile);
+    const mods = zcfg.splitList(ini.Mods);
+    const ids = zcfg.splitList(ini.WorkshopItems);
+    let added = 0;
+    const unreadable = [];
+    for (const itemId of items) {
+      const item = byItem.get(itemId);
+      if (!ids.includes(itemId)) ids.push(itemId);
+      if (!item) {
+        unreadable.push(itemId);
+        continue;
+      }
+      // Items with several mods inside often hold optional variants; turn on the first (main) one.
+      const main = item.mods[0];
+      if (main && !mods.includes(main.id)) {
+        mods.push(main.id);
+        added++;
+      }
+    }
+    zcfg.writeIni(iniFile, { Mods: zcfg.joinList(mods), WorkshopItems: zcfg.joinList(ids) });
+    // Put requirements in front of the mods that need them.
+    for (const m of [...mods]) zmods.setModEnabled(iniFile, m, true, this.workshop());
+    log(`Turned on ${added} mod(s) from the collection.${unreadable.length ? ` ${unreadable.length} item(s) could not be read; they are still downloaded by the server.` : ''}`);
+    return { items: items.length, added, unreadable: unreadable.length };
+  }
+
+  async installCollection(id, collectionLink) {
+    const running = Boolean(this.m.processes.get(id) && this.m.processes.get(id).child);
+    if (running) throw new Error('Stop the server before adding mods');
+    const log = (text) => this.m.emit('console', id, { text, stream: 'system' });
+    const result = await this.applyCollection(id, collectionLink, { log, progress: (label, done, total) => this.m.emit('install', id, { progress: { label, done, total } }) });
+    this.m.emit('mods', id);
+    return result;
   }
 
   /** Ports, RCON and the server's admin login, written before every start. */
@@ -177,6 +315,7 @@ class ZomboidGame {
       log(`Could not check for server updates (${err.message}); starting the installed version.`);
     }
     this.applyNetworkSettings(id);
+    if (config.worldSetupPending) await this.m.updateConfig(id, { worldSetupPending: false });
     return new ZomboidProcess({
       installDir: this.installDir,
       cacheDir: this.cacheDir(id),
@@ -320,13 +459,13 @@ class ZomboidGame {
 
   modsOverview(id) {
     const running = Boolean(this.m.processes.get(id) && this.m.processes.get(id).child);
-    return { game: 'zomboid', running, ...zmods.overview(this.iniFile(id)) };
+    return { game: 'zomboid', running, ...zmods.overview(this.iniFile(id), this.workshop()) };
   }
 
   setModEnabled(id, modId, enabled) {
     const running = Boolean(this.m.processes.get(id) && this.m.processes.get(id).child);
     if (running) throw new Error('Stop the server before changing mods');
-    return zmods.setModEnabled(this.iniFile(id), modId, enabled);
+    return zmods.setModEnabled(this.iniFile(id), modId, enabled, this.workshop());
   }
 
   // ---------- settings shown in the app ----------
@@ -342,6 +481,7 @@ class ZomboidGame {
       Public: ini.Public || 'false',
       Map: ini.Map || '',
       PauseEmpty: ini.PauseEmpty || 'true',
+      Open: ini.Open || 'true',
     };
   }
 
@@ -351,7 +491,8 @@ class ZomboidGame {
     if (typeof values.PublicDescription === 'string') patch.PublicDescription = values.PublicDescription.replace(/\r?\n/g, '\\n').slice(0, 1000);
     if (values.MaxPlayers !== undefined) patch.MaxPlayers = String(Math.max(1, Math.min(100, Math.floor(Number(values.MaxPlayers) || 32))));
     if (typeof values.Password === 'string') patch.Password = values.Password.replace(/[\r\n]/g, '').slice(0, 64);
-    for (const key of ['PVP', 'Public', 'PauseEmpty']) if (typeof values[key] === 'boolean') patch[key] = String(values[key]);
+    for (const key of ['PVP', 'Public', 'PauseEmpty', 'Open']) if (typeof values[key] === 'boolean') patch[key] = String(values[key]);
+    if (typeof values.Map === 'string' && values.Map.trim()) patch.Map = values.Map.replace(/[\r\n]/g, '').slice(0, 300);
     this.writeIni(id, patch);
     return this.settings(id);
   }

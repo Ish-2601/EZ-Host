@@ -31,6 +31,11 @@ const state = {
   sftpCredentials: null,
   liveStatus: null,
   menuFor: null, // server id the right-click menu is open for
+  game: 'minecraft', // which game's section the sidebar shows
+  zbNew: null, // choices on the new Zomboid server page
+  collections: null, // promise of the host's Workshop collections
+  rules: null, // world rules of the open Zomboid server
+  ruleEdits: {},
 };
 
 const MAX_CONSOLE_LINES = 2000;
@@ -126,7 +131,7 @@ function copyButton(text) {
 }
 
 function showView(name) {
-  for (const v of ['empty', 'new', 'details', 'server']) $(`view-${v}`).classList.toggle('hidden', v !== name);
+  for (const v of ['empty', 'new', 'zbnew', 'details', 'server']) $(`view-${v}`).classList.toggle('hidden', v !== name);
   $('main').scrollTop = 0;
 }
 
@@ -175,9 +180,51 @@ function statusWord(s) {
   return 'Stopped';
 }
 
+const gameOf = (s) => s.game || 'minecraft';
+const gameServers = () => state.servers.filter((s) => gameOf(s) === state.game);
+
+const GAME_TEXT = {
+  minecraft: {
+    button: '+ New Minecraft server',
+    title: 'Host a modded Minecraft server',
+    text: 'Pick a modpack or one of your CurseForge profiles. Self-Host MC installs everything it needs, runs the server on this PC, and gives you an address your friends can join from anywhere.',
+  },
+  zomboid: {
+    button: '+ New Zomboid server',
+    title: 'Host a Project Zomboid server',
+    text: 'Make a new dedicated server with its own world rules, map and Workshop mods (or a collection you made or favourited). Friends join from anywhere with the address it gives you.',
+  },
+};
+
+/** Switch the sidebar to one game's section. `route` opens one of its servers (or its start page). */
+function setGame(game, { route = true } = {}) {
+  state.game = game;
+  try { localStorage.setItem('game', game); } catch { /* storage blocked */ }
+  document.querySelectorAll('.game-btn').forEach((b) => b.classList.toggle('active', b.dataset.game === game));
+  $('new-server-btn').textContent = GAME_TEXT[game].button;
+  $('empty-title').textContent = GAME_TEXT[game].title;
+  $('empty-text').textContent = GAME_TEXT[game].text;
+  renderServerList();
+  if (!route) return;
+  const s = current();
+  if (s && gameOf(s) === game) return;
+  const first = gameServers()[0];
+  if (first) openServer(first.id);
+  else {
+    state.selectedId = null;
+    document.documentElement.dataset.game = game;
+    renderServerList();
+    showView('empty');
+  }
+}
+
 function renderServerList() {
+  for (const g of ['minecraft', 'zomboid']) {
+    const n = state.servers.filter((s) => gameOf(s) === g).length;
+    $(`count-${g}`).textContent = n ? String(n) : '';
+  }
   $('server-list').replaceChildren(
-    ...state.servers.map((s) =>
+    ...gameServers().map((s) =>
       el('li', {
         class: `server-item${s.id === state.selectedId ? ' active' : ''}`,
         onclick: () => openServer(s.id),
@@ -211,7 +258,7 @@ async function refreshServers() {
   if (s) renderServer(s);
   else if (state.selectedId) {
     state.selectedId = null;
-    showView(state.servers.length ? 'new' : 'empty');
+    setGame(state.game);
   }
 }
 
@@ -220,6 +267,8 @@ async function refreshServers() {
 function openNewServer() {
   state.selectedId = null;
   renderServerList();
+  document.documentElement.dataset.game = state.game;
+  if (state.game === 'zomboid') return openZomboidNew();
   showView('new');
   selectSource(state.source);
 }
@@ -227,8 +276,7 @@ function openNewServer() {
 async function selectSource(source) {
   state.source = source;
   document.querySelectorAll('.source-tab').forEach((t) => t.classList.toggle('active', t.dataset.source === source));
-  for (const s of ['profiles', 'modrinth', 'file', 'zomboid', 'vanilla']) $(`source-${s}`).classList.toggle('hidden', s !== source);
-  if (source === 'zomboid') loadZomboidConfigs();
+  for (const s of ['profiles', 'modrinth', 'file', 'vanilla']) $(`source-${s}`).classList.toggle('hidden', s !== source);
   if (source === 'profiles') await loadProfiles();
   if (source === 'modrinth') {
     if (!$('search-results').children.length) search('');
@@ -368,31 +416,261 @@ async function chooseVanilla() {
 
 // ---------- Project Zomboid: new server ----------
 
-async function loadZomboidConfigs() {
-  const configs = (await attempt(() => api.zomboidLocalConfigs())) || [];
-  const card = (title, sub, tags, onclick) => el('button', { class: 'pack-card', type: 'button', onclick },
-    el('div', { class: 'icon-fallback' }, '☣'),
-    el('div', {}, el('div', { class: 'launcher' }, 'Project Zomboid'), el('div', { class: 'title' }, title), el('div', { class: 'desc' }, sub),
+const zbCard = ({ title, sub, tags = [], image = null, glyph = '☣', label = 'Project Zomboid', selected = false, onclick }) =>
+  el('button', { class: `pack-card${selected ? ' selected' : ''}`, type: 'button', onclick },
+    image ? el('img', { src: image, alt: '' }) : el('div', { class: 'icon-fallback' }, glyph),
+    el('div', {}, el('div', { class: 'launcher' }, label), el('div', { class: 'title' }, title), el('div', { class: 'desc' }, sub),
       el('div', { class: 'tags' }, tags.filter(Boolean).map((t) => el('span', { class: 'tag' }, t)))));
-  fill($('zb-configs'),
-    card('Start fresh', 'A new world with the default settings and no mods.', [], () => chooseZomboid(null)),
-    configs.map((c) => card(c.name, 'Copy of the server you host in Zomboid: same mods and world settings.', [
-      `${c.mods} ${c.mods === 1 ? 'mod' : 'mods'}`, c.map, c.maxPlayers ? `${c.maxPlayers} players` : null,
-    ], () => chooseZomboid(c.name))));
+
+/** The host's Workshop collections, looked up once (it reads their Steam profile pages). */
+function workshopCollections(force = false) {
+  if (!state.collections || force) {
+    state.collections = api.zomboidCollections().catch((err) => ({ collections: [], notes: [err.message], failed: true }));
+  }
+  return state.collections;
 }
 
-function chooseZomboid(copyFrom) {
-  state.pending = { kind: 'zomboid', copyFrom };
-  $('version-field').classList.add('hidden');
-  $('mc-version-field').classList.add('hidden');
-  openDetails({
-    title: copyFrom ? `Copy of ${copyFrom}` : 'Project Zomboid',
-    description: copyFrom
-      ? 'Uses the mods and world settings of your in-game server. The server downloads the Workshop mods the first time it starts.'
-      : 'A fresh Project Zomboid world.',
-    name: copyFrom || 'Zomboid server',
-    ram: Math.max(4096, Math.min(8192, Math.floor((state.totalMemoryMb * 0.4) / 512) * 512)),
-  });
+async function openZomboidNew() {
+  showView('zbnew');
+  state.zbNew = { copyFrom: null, collection: null, extra: [], configs: [] };
+  $('zbnew-name').value = 'Zomboid server';
+  $('zbnew-link').value = '';
+  setupRamSlider($('zbnew-ram'), $('zbnew-ram-label'), Math.max(4096, Math.min(8192, Math.floor((state.totalMemoryMb * 0.4) / 512) * 512)), $('zbnew-ram-hint'));
+  renderZomboidNew();
+  state.zbNew.configs = (await attempt(() => api.zomboidLocalConfigs())) || [];
+  renderZomboidNew();
+  fill($('zbnew-notes'), 'Looking for your Workshop collections on Steam…');
+  const found = await workshopCollections();
+  if (!state.zbNew) return;
+  state.zbNew.found = found;
+  renderZomboidNew();
+}
+
+function collectionCards(list, selectedId, onPick) {
+  return list.map((c) => zbCard({
+    title: c.title,
+    sub: [c.source, c.account ? `on ${c.account}` : null].filter(Boolean).join(' '),
+    tags: [`${c.items} items`],
+    image: c.preview,
+    label: 'Workshop collection',
+    selected: selectedId === c.id,
+    onclick: () => onPick(c),
+  }));
+}
+
+function renderZomboidNew() {
+  const z = state.zbNew;
+  if (!z) return;
+  $('zbnew-form').classList.toggle('copying', Boolean(z.copyFrom));
+  fill($('zbnew-start'),
+    zbCard({ title: 'A brand-new server', sub: 'Your own settings, map, mods and world rules, chosen here.', selected: !z.copyFrom, onclick: () => { z.copyFrom = null; renderZomboidNew(); } }),
+    z.configs.map((c) => zbCard({
+      title: `Copy "${c.name}"`,
+      sub: 'A server you host from the game: same settings, mods and world rules.',
+      tags: [`${c.mods} ${c.mods === 1 ? 'mod' : 'mods'}`, c.map, c.maxPlayers ? `${c.maxPlayers} players` : null],
+      selected: z.copyFrom === c.name,
+      onclick: () => {
+        z.copyFrom = c.name;
+        if ($('zbnew-name').value === 'Zomboid server') $('zbnew-name').value = c.name;
+        renderZomboidNew();
+      },
+    })));
+  const found = z.found ? z.found.collections : [];
+  const list = [...z.extra, ...found.filter((c) => !z.extra.some((x) => x.id === c.id))];
+  fill($('zbnew-collections'),
+    zbCard({ title: z.copyFrom ? 'Keep its mods' : 'No mods', sub: z.copyFrom ? 'Only the mods the copied server already uses.' : 'Plain Project Zomboid. You can add mods later.', glyph: '∅', label: 'Mods', selected: !z.collection, onclick: () => { z.collection = null; renderZomboidNew(); } }),
+    collectionCards(list, z.collection && z.collection.id, (c) => { z.collection = c; renderZomboidNew(); }));
+  if (z.found) fill($('zbnew-notes'), z.found.notes.map((n) => el('div', {}, n)));
+  $('zbnew-summary').textContent = [
+    z.copyFrom ? `Copy of ${z.copyFrom}` : 'New world',
+    z.collection ? `+ ${z.collection.title} (${z.collection.items} mods)` : null,
+  ].filter(Boolean).join(' ');
+}
+
+/** Read a pasted collection link and add it to a list of choices. */
+async function previewCollectionLink(input, button) {
+  const link = input.value.trim();
+  if (!link) return null;
+  button.disabled = true;
+  button.textContent = 'Checking…';
+  try {
+    const c = await attempt(() => api.previewZomboidCollection(link));
+    return c ? { ...c, source: 'From a link', preview: null } : null;
+  } finally {
+    button.disabled = false;
+    button.textContent = button.dataset.label;
+  }
+}
+
+async function useZomboidNewLink() {
+  const c = await previewCollectionLink($('zbnew-link'), $('zbnew-link-btn'));
+  if (!c || !state.zbNew) return;
+  state.zbNew.extra = [c, ...state.zbNew.extra.filter((x) => x.id !== c.id)];
+  state.zbNew.collection = c;
+  $('zbnew-link').value = '';
+  renderZomboidNew();
+}
+
+async function createZomboidServer(event) {
+  event.preventDefault();
+  const z = state.zbNew;
+  const name = $('zbnew-name').value.trim() || 'Zomboid server';
+  const created = await attempt(() => api.createZomboid({
+    name,
+    memoryMb: Number($('zbnew-ram').value),
+    copyFrom: z.copyFrom,
+    collectionId: z.collection ? z.collection.id : null,
+    settings: z.copyFrom ? { PublicName: name } : {
+      PublicName: name,
+      MaxPlayers: Number($('zbnew-max').value),
+      Password: $('zbnew-pass').value,
+      Map: $('zbnew-map').value,
+      PVP: $('zbnew-pvp').checked,
+      Public: $('zbnew-public').checked,
+    },
+  }));
+  if (created) {
+    state.zbNew = null;
+    await refreshServers();
+    openServer(created.id);
+  }
+}
+
+// ---------- Project Zomboid: collections on an existing server ----------
+
+async function loadServerCollections(force = false) {
+  const id = state.selectedId;
+  fill($('zb-coll-notes'), 'Looking for your Workshop collections on Steam…');
+  if (force) fill($('zb-collections'));
+  const found = await workshopCollections(force);
+  if (state.selectedId !== id) return;
+  fill($('zb-collections'), collectionCards(found.collections, null, (c) => addCollection(c)));
+  fill($('zb-coll-notes'), found.notes.map((n) => el('div', {}, n)));
+}
+
+async function addCollection(c) {
+  const s = current();
+  if (!s) return;
+  if (s.status !== 'stopped') return toast('Stop the server before adding mods', true);
+  const ok = await confirmDialog(`Download and turn on the ${c.items} items in "${c.title}"? Mods already on stay on.`, { title: 'Add collection', confirmText: 'Add mods', danger: false });
+  if (!ok) return;
+  toast(`Adding "${c.title}". Progress shows in the Console tab.`);
+  const r = await attempt(() => api.installZomboidCollection(s.id, c.id));
+  if (r) {
+    toast(`Turned on ${r.added} mod(s) from "${c.title}".${r.unreadable ? ` ${r.unreadable} item(s) are maps or could not be read.` : ''}`);
+    loadMods();
+  }
+}
+
+async function addCollectionLink() {
+  const c = await previewCollectionLink($('zb-coll-link'), $('zb-coll-link-btn'));
+  if (!c) return;
+  $('zb-coll-link').value = '';
+  addCollection(c);
+}
+
+// ---------- Project Zomboid: world rules ----------
+
+async function loadWorldRules() {
+  const s = current();
+  if (!s || s.game !== 'zomboid') return;
+  state.ruleEdits = {};
+  $('zb-rules-saved').textContent = '';
+  const r = await attempt(() => api.zomboidSandbox(s.id));
+  if (!r || state.selectedId !== s.id) return;
+  state.rules = r;
+  renderWorldRules();
+}
+
+function ruleControl(f) {
+  const value = f.path in state.ruleEdits ? state.ruleEdits[f.path] : f.value;
+  const set = (v) => {
+    if (v === f.value) delete state.ruleEdits[f.path];
+    else state.ruleEdits[f.path] = v;
+    $('zb-rules-saved').textContent = Object.keys(state.ruleEdits).length ? `${Object.keys(state.ruleEdits).length} unsaved change(s)` : '';
+  };
+  if (f.type === 'bool') {
+    const box = el('input', { type: 'checkbox' });
+    box.checked = value;
+    box.onchange = () => set(box.checked);
+    return el('label', { class: 'checkbox' }, box, f.label);
+  }
+  let input;
+  if (f.type === 'choice') {
+    input = el('select', {}, f.choices.map((c) => el('option', { value: String(c.value) }, c.label)));
+    input.value = String(value);
+    input.onchange = () => set(Number(input.value));
+  } else if (f.type === 'number') {
+    input = el('input', { type: 'number', step: f.decimal ? 'any' : '1', min: f.min, max: f.max });
+    input.value = String(value);
+    input.onchange = () => {
+      let n = Number(input.value);
+      if (!Number.isFinite(n)) n = f.value;
+      if (f.min !== undefined) n = Math.max(f.min, n);
+      if (f.max !== undefined) n = Math.min(f.max, n);
+      input.value = String(n);
+      set(n);
+    };
+  } else {
+    input = el('input', { type: 'text' });
+    input.value = value;
+    input.onchange = () => set(input.value);
+  }
+  return [el('div', { class: 'rule-label' }, f.label), input];
+}
+
+function ruleEl(f) {
+  return el('div', { class: 'rule' }, ruleControl(f),
+    f.help ? el('div', { class: 'rule-help' }, f.help + (f.min !== undefined ? ` (${f.min} to ${f.max})` : '')) : null);
+}
+
+const GROUP_NAMES = { General: 'World', ZombieLore: 'Zombies', ZombieConfig: 'Zombie population', MultiplierConfig: 'XP multipliers', Map: 'Map', Basement: 'Basements' };
+
+function renderWorldRules() {
+  const r = state.rules;
+  const s = current();
+  const running = s && s.status !== 'stopped';
+  $('zb-rules-save').disabled = running;
+  if (!r || r.missing) {
+    fill($('zb-rules'), el('p', { class: 'muted' }, 'This server has no world rules file yet. Start it once and they appear here.'));
+    return;
+  }
+  const q = $('zb-rules-search').value.trim().toLowerCase();
+  const byPath = new Map(r.fields.map((f) => [f.path, f]));
+  if (q) {
+    const hits = r.fields.filter((f) => `${f.label} ${f.help} ${f.path}`.toLowerCase().includes(q));
+    fill($('zb-rules'), hits.length ? el('div', { class: 'rules-grid' }, hits.slice(0, 80).map(ruleEl)) : el('p', { class: 'muted' }, 'No rules match.'));
+    return;
+  }
+  const groups = new Map();
+  for (const f of r.fields) {
+    const g = f.group.split('.')[0];
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(f);
+  }
+  fill($('zb-rules'),
+    running ? el('p', { class: 'notice' }, 'Stop the server to change world rules.') : null,
+    el('details', { class: 'rules-group', open: '' }, el('summary', {}, 'Most changed'),
+      el('div', { class: 'rules-grid' }, r.common.map((p) => byPath.get(p)).filter(Boolean).map(ruleEl))),
+    [...groups].map(([g, fields]) => el('details', { class: 'rules-group' },
+      el('summary', {}, `${GROUP_NAMES[g] || g} (${fields.length})`),
+      el('div', { class: 'rules-grid' }, fields.map(ruleEl)))));
+}
+
+async function saveWorldRules() {
+  const s = current();
+  if (!Object.keys(state.ruleEdits).length) {
+    $('zb-rules-saved').textContent = 'Nothing changed.';
+    return;
+  }
+  const r = await attempt(() => api.saveZomboidSandbox(s.id, state.ruleEdits));
+  if (r) {
+    state.rules = r;
+    state.ruleEdits = {};
+    renderWorldRules();
+    $('zb-rules-saved').textContent = 'Saved. They apply on the next start.';
+    refreshServers();
+  }
 }
 
 async function createServer(event) {
@@ -401,8 +679,7 @@ async function createServer(event) {
   if (!p) return;
   const common = { name: $('server-name').value.trim(), memoryMb: Number($('server-ram').value) };
   const created = await attempt(() =>
-    p.kind === 'zomboid' ? api.createZomboid({ ...common, copyFrom: p.copyFrom || null })
-    : p.kind === 'profile' ? api.createFromProfile({ ...common, profileId: p.profile.id })
+    p.kind === 'profile' ? api.createFromProfile({ ...common, profileId: p.profile.id })
     : p.kind === 'vanilla' ? api.createVanilla({ ...common, minecraft: $('mc-version').value })
     : api.createFromModrinth({ ...common, projectId: p.hit.id, versionId: $('pack-version').value })
   );
@@ -429,6 +706,8 @@ async function openServer(id) {
     $('file-editor').classList.add('hidden');
   }
   state.selectedId = id;
+  const target = state.servers.find((x) => x.id === id);
+  if (target && gameOf(target) !== state.game) setGame(gameOf(target), { route: false });
   renderServerList();
   showView('server');
   const s = current() || (await attempt(() => api.getServer(id)));
@@ -436,7 +715,7 @@ async function openServer(id) {
   state.players[id] = (await attempt(() => api.getPlayers(id))) || [];
   state.tunnels[id] = (await attempt(() => api.getTunnel(id))) || {};
   renderServer(s);
-  switchTab(s.status === 'installing' || s.installError || s.crashed ? 'console' : 'friends');
+  switchTab(s.status === 'installing' || s.installError || s.crashed ? 'console' : s.worldSetupPending ? 'settings' : 'friends');
   const history = (await attempt(() => api.getConsole(id))) || [];
   $('console').replaceChildren();
   history.forEach(appendConsole);
@@ -1448,7 +1727,10 @@ async function deleteServer(s) {
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   for (const tab of ['friends', 'players', 'mods', 'world', 'console', 'backups', 'files', 'tools', 'settings']) $(`tab-${tab}`).classList.toggle('hidden', name !== tab);
-  if (name === 'mods') loadMods();
+  if (name === 'mods') {
+    loadMods();
+    if (current() && current().game === 'zomboid') loadServerCollections();
+  }
   if (name === 'tools') loadPerformance();
   if (name === 'settings') loadServerIcon();
   if (name === 'world') loadWorld();
@@ -1930,6 +2212,7 @@ async function loadZomboidSettings() {
   $('zb-max').value = v.MaxPlayers;
   $('zb-pass').value = v.Password;
   $('zb-pvp').checked = v.PVP === 'true';
+  $('zb-map').value = v.Map || 'Muldraugh, KY';
   $('zb-pause').checked = v.PauseEmpty === 'true';
   $('zb-public').checked = v.Public === 'true';
   setupRamSlider($('zb-ram'), $('zb-ram-label'), s.memoryMb);
@@ -1948,6 +2231,7 @@ async function saveZomboidSettings(event) {
       PVP: $('zb-pvp').checked,
       PauseEmpty: $('zb-pause').checked,
       Public: $('zb-public').checked,
+      Map: $('zb-map').value,
     });
     await api.setMemory(s.id, Number($('zb-ram').value));
     if ($('zb-name').value.trim()) await api.update(s.id, { name: $('zb-name').value.trim() });
@@ -1960,7 +2244,10 @@ async function saveZomboidSettings(event) {
 }
 
 async function loadSettings() {
-  if ((current() && current().game === 'zomboid')) return loadZomboidSettings();
+  if ((current() && current().game === 'zomboid')) {
+    loadWorldRules();
+    return loadZomboidSettings();
+  }
   const s = current();
   if (!s) return;
   $('set-name').value = s.name;
@@ -2366,6 +2653,16 @@ function wire() {
     }
   });
   $('zb-settings-form').onsubmit = saveZomboidSettings;
+  document.querySelectorAll('.game-btn').forEach((b) => (b.onclick = () => setGame(b.dataset.game)));
+  $('zbnew-form').onsubmit = createZomboidServer;
+  for (const id of ['zbnew-link-btn', 'zb-coll-link-btn']) $(id).dataset.label = $(id).textContent;
+  $('zbnew-link-btn').onclick = useZomboidNewLink;
+  $('zbnew-link').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); useZomboidNewLink(); } };
+  $('zb-coll-link-btn').onclick = addCollectionLink;
+  $('zb-coll-refresh').onclick = () => loadServerCollections(true);
+  $('zb-rules-search').oninput = renderWorldRules;
+  $('zb-rules-save').onclick = saveWorldRules;
+  $('zb-rules-reset').onclick = loadWorldRules;
   $('mods-search').oninput = renderMods;
   $('mods-filter').onchange = renderMods;
   $('perf-refresh').onclick = loadPerformance;
@@ -2587,8 +2884,10 @@ async function init() {
   state.playit = (await attempt(() => api.playitStatus())) || state.playit;
   renderPlayitPill();
   await refreshServers();
-  if (state.servers.length) await openServer(state.servers[0].id);
-  else showView('empty');
+  let saved = null;
+  try { saved = localStorage.getItem('game'); } catch { /* storage blocked */ }
+  const game = saved === 'zomboid' || saved === 'minecraft' ? saved : state.servers.length ? gameOf(state.servers[0]) : 'minecraft';
+  setGame(game);
   // First run: a short tour, which can be skipped.
   if (!state.app.tutorialDone) setTimeout(startTour, 600);
 }

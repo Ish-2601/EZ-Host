@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net https://mcasset.cloud https://project-crafting.github.io data:; style-src 'self'; script-src 'self'" />
+        content="default-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net https://mcasset.cloud https://project-crafting.github.io https://steamuserimages-a.akamaihd.net https://images.steamusercontent.com data:; style-src 'self'; script-src 'self'" />
   <title>Self-Host MC</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="cyberpunk.css" />
@@ -17,6 +17,10 @@
         <div class="brand-name">Self-Host MC</div>
         <div class="brand-sub">Your PC, your server</div>
       </div>
+    </div>
+    <div class="game-switch" role="tablist" aria-label="Game">
+      <button class="game-btn" type="button" data-game="minecraft"><span class="game-glyph">⛏</span> Minecraft <span class="game-count" id="count-minecraft"></span></button>
+      <button class="game-btn" type="button" data-game="zomboid"><span class="game-glyph">☣</span> Project Zomboid <span class="game-count" id="count-zomboid"></span></button>
     </div>
     <button id="new-server-btn" class="btn btn-primary btn-block">+ New server</button>
     <div class="sidebar-label">Your servers</div>
@@ -32,10 +36,51 @@
     <section id="view-empty" class="view hidden">
       <div class="empty">
         <img class="empty-icon" src="icon.svg" alt="" />
-        <h1>Host a modded Minecraft server</h1>
-        <p>Pick a modpack or one of your CurseForge profiles. Self-Host MC installs everything it needs, runs the server on this PC, and gives you an address your friends can join from anywhere.</p>
+        <h1 id="empty-title">Host a modded Minecraft server</h1>
+        <p id="empty-text">Pick a modpack or one of your CurseForge profiles. Self-Host MC installs everything it needs, runs the server on this PC, and gives you an address your friends can join from anywhere.</p>
         <button class="btn btn-primary btn-lg" data-action="new-server">Create your first server</button>
       </div>
+    </section>
+
+    <!-- New Project Zomboid server -->
+    <section id="view-zbnew" class="view hidden">
+      <header class="page-head">
+        <h1>New Project Zomboid server</h1>
+        <p class="muted">A dedicated server with its own world, mods and rules. The first one downloads the server from Steam (about 7 GB).</p>
+      </header>
+      <form id="zbnew-form" class="zbnew">
+        <section class="card">
+          <h3><span class="step-dot active">1</span> Starting point</h3>
+          <div id="zbnew-start" class="pack-grid"></div>
+        </section>
+        <section class="card">
+          <h3><span class="step-dot active">2</span> Mods from the Steam Workshop</h3>
+          <p class="muted small">Collections you made or favourited on Steam show up here. Pick one and all of its mods are downloaded and turned on.</p>
+          <div id="zbnew-collections" class="pack-grid"></div>
+          <div class="search">
+            <input id="zbnew-link" type="text" placeholder="Or paste a collection link, e.g. https://steamcommunity.com/sharedfiles/filedetails/?id=..." autocomplete="off" />
+            <button id="zbnew-link-btn" class="btn" type="button">Use this link</button>
+          </div>
+          <div id="zbnew-notes" class="muted small"></div>
+        </section>
+        <section class="card form">
+          <h3><span class="step-dot active">3</span> Server settings</h3>
+          <label>Server name (shown to players) <input id="zbnew-name" type="text" maxlength="64" required /></label>
+          <div class="zbnew-fresh-only grid-2">
+            <label>Max players <input id="zbnew-max" type="number" min="1" max="100" value="16" /></label>
+            <label>Server password (optional) <input id="zbnew-pass" type="text" maxlength="64" placeholder="No password" /></label>
+          </div>
+          <label class="zbnew-fresh-only">Map <input id="zbnew-map" type="text" value="Muldraugh, KY" />
+            <span class="muted small">Muldraugh, KY is the whole normal map. Map mods tell you what to put in front of it.</span></label>
+          <div class="check-grid zbnew-fresh-only">
+            <label class="checkbox"><input id="zbnew-pvp" type="checkbox" checked /> Players can hurt each other (PvP)</label>
+            <label class="checkbox"><input id="zbnew-public" type="checkbox" /> List in Zomboid's public server browser</label>
+          </div>
+          <label>Memory: <strong id="zbnew-ram-label"></strong><input id="zbnew-ram" type="range" min="2048" step="512" /><span id="zbnew-ram-hint" class="muted small"></span></label>
+        </section>
+        <p class="muted small zbnew-fresh-only">World rules (zombie count and speed, loot, day length, start date and about 270 more) come next: the server opens on its World rules page before its first start.</p>
+        <div class="row"><button class="btn btn-primary btn-lg" type="submit">Create server</button><span id="zbnew-summary" class="muted small"></span></div>
+      </form>
     </section>
 
     <!-- New server, step 1 and 2: choose where the mods come from -->
@@ -59,10 +104,6 @@
           <span class="source-title">A .mrpack file</span>
           <span class="source-sub">A modpack file you downloaded.</span>
         </button>
-        <button class="source-tab" data-source="zomboid" role="tab">
-          <span class="source-title">Project Zomboid</span>
-          <span class="source-sub">A dedicated Zomboid server, with your Workshop mods.</span>
-        </button>
         <button class="source-tab" data-source="vanilla" role="tab">
           <span class="source-title">Plain Minecraft</span>
           <span class="source-sub">No mods. Friends join with the normal game.</span>
@@ -81,11 +122,6 @@
         </form>
         <div id="search-status" class="muted small"></div>
         <div id="search-results" class="pack-grid"></div>
-      </div>
-
-      <div id="source-zomboid" class="source-panel hidden">
-        <p class="muted">Copy one of the servers you host in Zomboid (same mods and world settings), or start fresh. The first Zomboid server downloads the dedicated server from Steam, about 7 GB.</p>
-        <div id="zb-configs" class="pack-grid"></div>
       </div>
 
       <div id="source-vanilla" class="source-panel hidden">
@@ -275,6 +311,16 @@
           <p class="muted small">These mods caused trouble or only work in the game itself, not on a server. Turned-off mods stay in the server folder, so you can turn them back on.</p>
           <ul id="mods-problem-list" class="mod-list"></ul>
         </div>
+        <div id="zb-collection-card" class="card zb-only">
+          <div class="map-head"><h3>Add a Workshop collection</h3><span class="spacer"></span><button id="zb-coll-refresh" class="btn btn-ghost" type="button">Look again</button></div>
+          <p class="muted small">Collections you made or favourited on Steam. Adding one downloads its mods and turns them on; mods already on stay on.</p>
+          <div id="zb-collections" class="pack-grid"></div>
+          <div class="search">
+            <input id="zb-coll-link" type="text" placeholder="Or paste a collection link" autocomplete="off" />
+            <button id="zb-coll-link-btn" class="btn" type="button">Add from link</button>
+          </div>
+          <div id="zb-coll-notes" class="muted small"></div>
+        </div>
         <div class="card">
           <div class="map-head">
             <h3>Mods on this server</h3>
@@ -448,6 +494,7 @@
             <label>Max players <input id="zb-max" type="number" min="1" max="100" /></label>
             <label>Server password (optional) <input id="zb-pass" type="text" maxlength="64" placeholder="No password" /></label>
           </div>
+          <label>Map <input id="zb-map" type="text" /></label>
           <label>Memory: <strong id="zb-ram-label"></strong><input id="zb-ram" type="range" min="2048" step="512" /></label>
           <div class="check-grid">
             <label class="checkbox"><input id="zb-pvp" type="checkbox" /> Players can hurt each other (PvP)</label>
@@ -457,6 +504,12 @@
           <p class="muted small">Zomboid has no server icon in its server list, so there is nothing to set for that. Changes apply on the next start.</p>
           <div class="row"><button class="btn btn-primary" type="submit">Save</button><span id="zb-saved" class="muted small"></span></div>
         </form>
+        <div id="zb-rules-card" class="card zb-only">
+          <div class="map-head"><h3>World rules</h3><span class="spacer"></span><input id="zb-rules-search" type="search" placeholder="Search rules, e.g. loot, speed" autocomplete="off" /></div>
+          <p id="zb-rules-note" class="muted small">Zombies, loot, day length, the start date and everything else about the world. Most rules apply on the next start; a few (like the start date) only matter for a new world.</p>
+          <div id="zb-rules"></div>
+          <div class="row"><button id="zb-rules-save" class="btn btn-primary" type="button">Save world rules</button><button id="zb-rules-reset" class="btn btn-ghost" type="button">Undo changes</button><span id="zb-rules-saved" class="muted small"></span></div>
+        </div>
         <div class="card icon-card">
           <h3>Server icon</h3>
           <div class="row">

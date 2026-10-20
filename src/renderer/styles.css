@@ -401,6 +401,27 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 
 /* ---------- Per-game parts ---------- */
 html:not([data-game="zomboid"]) .zb-only { display: none !important; }
+/* Game sections */
+.game-switch { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 4px 0 12px; }
+.game-btn { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+.game-btn:hover { color: var(--text); }
+.game-btn.active { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.game-glyph { width: 18px; text-align: center; }
+.game-count { margin-left: auto; font-size: 11px; color: var(--muted); font-weight: 500; }
+.zbnew { display: flex; flex-direction: column; gap: 14px; }
+.zbnew .form, .zbnew .card.form { max-width: none; }
+.zbnew h3 { display: flex; align-items: center; gap: 8px; }
+.pack-card.selected { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.zbnew.copying .zbnew-fresh-only { display: none !important; }
+.rules-group { border: 1px solid var(--border); border-radius: 8px; padding: 0 12px; margin-top: 8px; }
+.rules-group > summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.rules-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; padding: 4px 0 14px; }
+.rule { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rule-label { font-weight: 600; font-size: 13px; }
+.rule-label .changed { color: var(--accent); font-weight: 500; margin-left: 6px; font-size: 11px; }
+.rule-help { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.rule .checkbox { font-weight: 600; font-size: 13px; }
+@media (max-width: 900px) { .rules-grid { grid-template-columns: 1fr; } }
 html[data-game="zomboid"] #tab-friends > :not(.zb-only),
 html[data-game="zomboid"] #settings-form,
 html[data-game="zomboid"] .icon-card,
@@ -416,3 +437,6 @@ textarea { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid
 #wl-secret { margin-top: 4px; }
 #mods-list { overflow-x: hidden; }
 #zb-settings-form label.checkbox { flex-direction: row; align-items: center; text-align: left; }
+.form .check-grid label { flex-direction: row; }
+.map-head h3 { white-space: nowrap; }
+#zb-rules-search { max-width: 320px; }

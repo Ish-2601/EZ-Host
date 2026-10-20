@@ -117,12 +117,15 @@ function parseModInfo(file) {
  * mods inside it: [{ workshopId, title, mods: [{ id, name, require, incompatible }] }].
  * Build 42 mods keep their files in a "42" (or "42.x") subfolder; the newest one wins.
  */
-function scanWorkshop() {
+function scanWorkshop(extraRoots = []) {
   const items = [];
-  for (const lib of steamLibraries()) {
-    const root = path.join(lib, 'steamapps', 'workshop', 'content', '108600');
+  const seen = new Set();
+  // The host's own Steam downloads first, then items the app downloaded itself.
+  const roots = [...steamLibraries().map((lib) => path.join(lib, 'steamapps', 'workshop', 'content', '108600')), ...extraRoots];
+  for (const root of roots) {
     if (!fs.existsSync(root)) continue;
     for (const workshopId of fs.readdirSync(root)) {
+      if (seen.has(workshopId)) continue;
       const modsDir = path.join(root, workshopId, 'mods');
       if (!fs.existsSync(modsDir)) continue;
       const mods = [];
@@ -141,7 +144,10 @@ function scanWorkshop() {
           // unreadable mod.info
         }
       }
-      if (mods.length) items.push({ workshopId, title: mods[0].name, mods });
+      if (mods.length) {
+        seen.add(workshopId);
+        items.push({ workshopId, title: mods[0].name, mods });
+      }
     }
   }
   return items;
