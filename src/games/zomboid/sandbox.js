@@ -78,9 +78,25 @@ function readSandbox(file) {
   return parseSandbox(fs.readFileSync(file, 'utf8'));
 }
 
-/** Write new values ({ 'ZombieLore.Speed': 2, ... }), keeping comments and layout. */
-function writeSandbox(file, values) {
+function formatValue(field, v) {
+  if (field.type === 'bool') return v === true || v === 'true' ? 'true' : 'false';
+  if (field.type === 'string') return `"${String(v).replace(/["\\\r\n]/g, '')}"`;
+  let n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  if (field.min !== undefined) n = Math.max(field.min, n);
+  if (field.max !== undefined) n = Math.min(field.max, n);
+  if (field.type === 'choice' && !field.choices.some((c) => c.value === n)) return null;
+  return field.decimal ? (Number.isInteger(n) ? n.toFixed(1) : String(n)) : String(Math.round(n));
+}
+
+/**
+ * Write new values ({ 'ZombieLore.Speed': 2, ... }), keeping comments and layout.
+ * `extra` describes options the file may not have yet (mod options before the
+ * server has run with the mod); those are added in their table.
+ */
+function writeSandbox(file, values, extra = []) {
   const fields = new Map(readSandbox(file).map((f) => [f.path, f]));
+  const extraByPath = new Map(extra.map((f) => [f.path, f]));
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
   const stack = [];
   const out = lines.map((line) => {
@@ -97,20 +113,34 @@ function writeSandbox(file, values) {
     if (!m) return line;
     const path = [...stack.slice(1), m[2]].join('.');
     if (!(path in values) || !fields.has(path)) return line;
-    const field = fields.get(path);
-    let v = values[path];
-    if (field.type === 'bool') v = v === true || v === 'true' ? 'true' : 'false';
-    else if (field.type === 'string') v = `"${String(v).replace(/["\\\r\n]/g, '')}"`;
-    else {
-      let n = Number(v);
-      if (!Number.isFinite(n)) return line;
-      if (field.min !== undefined) n = Math.max(field.min, n);
-      if (field.max !== undefined) n = Math.min(field.max, n);
-      if (field.type === 'choice' && !field.choices.some((c) => c.value === n)) return line;
-      v = field.decimal ? (Number.isInteger(n) ? n.toFixed(1) : String(n)) : String(Math.round(n));
-    }
-    return `${m[1]}${m[2]} = ${v},`;
+    const field = { ...fields.get(path), ...(extraByPath.get(path) || {}) };
+    const v = formatValue(field, values[path]);
+    return v === null ? line : `${m[1]}${m[2]} = ${v},`;
   });
+  // Options not in the file yet: group by table, then add them.
+  const missing = new Map();
+  for (const [p, v] of Object.entries(values)) {
+    const field = extraByPath.get(p);
+    if (fields.has(p) || !field || !/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(p)) continue;
+    const value = formatValue(field, v);
+    if (value === null) continue;
+    const [table, key] = p.split('.');
+    if (!missing.has(table)) missing.set(table, []);
+    missing.get(table).push(`        ${key} = ${value},`);
+  }
+  for (const [table, lines] of missing) {
+    const start = out.findIndex((l) => new RegExp(`^\\s{4}${table}\\s*=\\s*\\{\\s*$`).test(l));
+    if (start >= 0) {
+      const end = out.findIndex((l, i) => i > start && /^\s{4}\},?\s*$/.test(l));
+      if (end > start) {
+        out.splice(end, 0, ...lines);
+        continue;
+      }
+    }
+    const close = out.map((l) => /^\}\s*$/.test(l)).lastIndexOf(true);
+    if (close < 0) continue;
+    out.splice(close, 0, `    ${table} = {`, ...lines, '    },');
+  }
   fs.writeFileSync(file, out.join('\n'));
 }
 

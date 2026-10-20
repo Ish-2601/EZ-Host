@@ -149,13 +149,38 @@ function setupRamSlider(input, label, value, hint) {
     label.textContent = formatMb(mb);
     if (hint) {
       hint.textContent =
-        mb < 4096 ? 'Fine for small packs. Big modpacks may run out of memory.'
+        state.game === 'zomboid'
+          ? mb < 4096 ? 'Fine for a few friends with few mods. Lots of mods need more.'
+            : mb > state.totalMemoryMb * 0.6 ? `This PC has ${formatMb(state.totalMemoryMb)}. Leave some for Windows and Project Zomboid itself.`
+            : `Good for most Zomboid servers. This PC has ${formatMb(state.totalMemoryMb)} in total.`
+        : mb < 4096 ? 'Fine for small packs. Big modpacks may run out of memory.'
         : mb > state.totalMemoryMb * 0.6 ? `This PC has ${formatMb(state.totalMemoryMb)}. Leave some for Windows and Minecraft itself.`
         : `Good for most modpacks. This PC has ${formatMb(state.totalMemoryMb)} in total.`;
     }
   };
   input.oninput = update;
   update();
+}
+
+/**
+ * Memory a Zomboid server needs: about 4 GB for the game, plus roughly 24 MB per
+ * mod (maps and big mods weigh more, small ones less) and 128 MB per player slot.
+ */
+function recommendedZomboidRam(modCount = 0, players = 16) {
+  const mb = 4096 + modCount * 24 + Math.min(players, 64) * 128;
+  const cap = Math.max(4096, Math.floor((state.totalMemoryMb * 0.75) / 512) * 512);
+  return Math.min(cap, Math.ceil(mb / 512) * 512);
+}
+
+/** "Suggested for N mods and M players: X GB [Use this]" under a memory slider. */
+function showRamSuggestion(box, slider, label, modCount, players) {
+  const mb = recommendedZomboidRam(modCount, players);
+  const current = Number(slider.value);
+  const button = el('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { slider.value = String(mb); slider.oninput(); showRamSuggestion(box, slider, label, modCount, players); } }, 'Use this');
+  fill(box,
+    el('span', {}, `Suggested for ${modCount} ${modCount === 1 ? 'mod' : 'mods'} and ${players} players: `, el('strong', {}, formatMb(mb))),
+    current === mb ? el('span', { class: 'muted small' }, '✓ Using it') : button,
+    current < mb - 1024 ? el('span', { class: 'muted small' }, 'Less than this may cause lag or crashes.') : null);
 }
 
 function recommendedRam(modCount = 100) {
@@ -430,12 +455,24 @@ function workshopCollections(force = false) {
   return state.collections;
 }
 
+function zbRamSuggestion() {
+  const z = state.zbNew;
+  if (!z) return;
+  const copied = z.copyFrom && z.configs.find((c) => c.name === z.copyFrom);
+  const mods = (z.collection ? z.collection.items : 0) + (copied ? copied.mods : 0);
+  const players = copied && copied.maxPlayers ? copied.maxPlayers : Number($('zbnew-max').value) || 16;
+  showRamSuggestion($('zbnew-ram-suggest'), $('zbnew-ram'), $('zbnew-ram-label'), mods, players);
+}
+
 async function openZomboidNew() {
   showView('zbnew');
   state.zbNew = { copyFrom: null, collection: null, extra: [], configs: [] };
   $('zbnew-name').value = 'Zomboid server';
   $('zbnew-link').value = '';
-  setupRamSlider($('zbnew-ram'), $('zbnew-ram-label'), Math.max(4096, Math.min(8192, Math.floor((state.totalMemoryMb * 0.4) / 512) * 512)), $('zbnew-ram-hint'));
+  setupRamSlider($('zbnew-ram'), $('zbnew-ram-label'), recommendedZomboidRam(0, 16), $('zbnew-ram-hint'));
+  const slide = $('zbnew-ram').oninput;
+  $('zbnew-ram').oninput = () => { slide(); zbRamSuggestion(); };
+  $('zbnew-max').oninput = zbRamSuggestion;
   renderZomboidNew();
   state.zbNew.configs = (await attempt(() => api.zomboidLocalConfigs())) || [];
   renderZomboidNew();
@@ -479,8 +516,14 @@ function renderZomboidNew() {
   const list = [...z.extra, ...found.filter((c) => !z.extra.some((x) => x.id === c.id))];
   fill($('zbnew-collections'),
     zbCard({ title: z.copyFrom ? 'Keep its mods' : 'No mods', sub: z.copyFrom ? 'Only the mods the copied server already uses.' : 'Plain Project Zomboid. You can add mods later.', glyph: '∅', label: 'Mods', selected: !z.collection, onclick: () => { z.collection = null; renderZomboidNew(); } }),
-    collectionCards(list, z.collection && z.collection.id, (c) => { z.collection = c; renderZomboidNew(); }));
+    collectionCards(list, z.collection && z.collection.id, (c) => {
+      z.collection = c;
+      $('zbnew-ram').value = String(recommendedZomboidRam(c.items, Number($('zbnew-max').value) || 16));
+      $('zbnew-ram').oninput();
+      renderZomboidNew();
+    }));
   if (z.found) fill($('zbnew-notes'), z.found.notes.map((n) => el('div', {}, n)));
+  zbRamSuggestion();
   $('zbnew-summary').textContent = [
     z.copyFrom ? `Copy of ${z.copyFrom}` : 'New world',
     z.collection ? `+ ${z.collection.title} (${z.collection.items} mods)` : null,
@@ -582,12 +625,13 @@ async function loadWorldRules() {
   renderWorldRules();
 }
 
-function ruleControl(f) {
-  const value = f.path in state.ruleEdits ? state.ruleEdits[f.path] : f.value;
+function ruleControl(f, edits = state.ruleEdits, status = $('zb-rules-saved')) {
+  const key = f.path || f.key;
+  const value = key in edits ? edits[key] : f.value;
   const set = (v) => {
-    if (v === f.value) delete state.ruleEdits[f.path];
-    else state.ruleEdits[f.path] = v;
-    $('zb-rules-saved').textContent = Object.keys(state.ruleEdits).length ? `${Object.keys(state.ruleEdits).length} unsaved change(s)` : '';
+    if (v === f.value) delete edits[key];
+    else edits[key] = v;
+    status.textContent = Object.keys(edits).length ? `${Object.keys(edits).length} unsaved change(s)` : '';
   };
   if (f.type === 'bool') {
     const box = el('input', { type: 'checkbox' });
@@ -619,8 +663,8 @@ function ruleControl(f) {
   return [el('div', { class: 'rule-label' }, f.label), input];
 }
 
-function ruleEl(f) {
-  return el('div', { class: 'rule' }, ruleControl(f),
+function ruleEl(f, edits, status) {
+  return el('div', { class: 'rule' }, ruleControl(f, edits, status),
     f.help ? el('div', { class: 'rule-help' }, f.help + (f.min !== undefined ? ` (${f.min} to ${f.max})` : '')) : null);
 }
 
@@ -639,22 +683,76 @@ function renderWorldRules() {
   const byPath = new Map(r.fields.map((f) => [f.path, f]));
   if (q) {
     const hits = r.fields.filter((f) => `${f.label} ${f.help} ${f.path}`.toLowerCase().includes(q));
-    fill($('zb-rules'), hits.length ? el('div', { class: 'rules-grid' }, hits.slice(0, 80).map(ruleEl)) : el('p', { class: 'muted' }, 'No rules match.'));
+    fill($('zb-rules'), hits.length ? el('div', { class: 'rules-grid' }, hits.slice(0, 80).map((f) => ruleEl(f))) : el('p', { class: 'muted' }, 'No rules match.'));
     return;
   }
   const groups = new Map();
   for (const f of r.fields) {
-    const g = f.group.split('.')[0];
+    const g = f.mod ? f.group : f.group.split('.')[0];
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(f);
   }
   fill($('zb-rules'),
     running ? el('p', { class: 'notice' }, 'Stop the server to change world rules.') : null,
     el('details', { class: 'rules-group', open: '' }, el('summary', {}, 'Most changed'),
-      el('div', { class: 'rules-grid' }, r.common.map((p) => byPath.get(p)).filter(Boolean).map(ruleEl))),
-    [...groups].map(([g, fields]) => el('details', { class: 'rules-group' },
+      el('div', { class: 'rules-grid' }, r.common.map((p) => byPath.get(p)).filter(Boolean).map((f) => ruleEl(f)))),
+    [...groups].sort((a, b) => a[0].startsWith('Mod: ') - b[0].startsWith('Mod: ')).map(([g, fields]) => el('details', { class: 'rules-group' },
       el('summary', {}, `${GROUP_NAMES[g] || g} (${fields.length})`),
-      el('div', { class: 'rules-grid' }, fields.map(ruleEl)))));
+      el('div', { class: 'rules-grid' }, fields.map((f) => ruleEl(f))))));
+}
+
+// ---------- Project Zomboid: all server options ----------
+
+async function loadServerOptions() {
+  const s = current();
+  if (!s || s.game !== 'zomboid') return;
+  state.optionEdits = {};
+  $('zb-options-saved').textContent = '';
+  const r = await attempt(() => api.zomboidServerOptions(s.id));
+  if (!r || state.selectedId !== s.id) return;
+  state.options = r;
+  renderServerOptions();
+}
+
+function renderServerOptions() {
+  const r = state.options;
+  const s = current();
+  const running = s && s.status !== 'stopped';
+  const status = $('zb-options-saved');
+  $('zb-options-save').disabled = running;
+  if (!r || r.missing) return fill($('zb-options'), el('p', { class: 'muted' }, 'Start the server once and its options appear here.'));
+  const item = (f) => ruleEl(f, state.optionEdits, status);
+  const q = $('zb-options-search').value.trim().toLowerCase();
+  if (q) {
+    const hits = r.fields.filter((f) => `${f.label} ${f.help} ${f.key}`.toLowerCase().includes(q));
+    return fill($('zb-options'), hits.length ? el('div', { class: 'rules-grid' }, hits.slice(0, 80).map(item)) : el('p', { class: 'muted' }, 'No options match.'));
+  }
+  const groups = new Map();
+  for (const f of r.fields) {
+    if (!groups.has(f.group)) groups.set(f.group, []);
+    groups.get(f.group).push(f);
+  }
+  fill($('zb-options'),
+    running ? el('p', { class: 'notice' }, 'Stop the server to change its options.') : null,
+    [...groups].map(([g, fields]) => el('details', { class: 'rules-group' },
+      el('summary', {}, `${g} (${fields.length})`),
+      el('div', { class: 'rules-grid' }, fields.map(item)))));
+}
+
+async function saveServerOptions() {
+  const s = current();
+  if (!Object.keys(state.optionEdits || {}).length) {
+    $('zb-options-saved').textContent = 'Nothing changed.';
+    return;
+  }
+  const r = await attempt(() => api.saveZomboidServerOptions(s.id, state.optionEdits));
+  if (r) {
+    state.options = r;
+    state.optionEdits = {};
+    renderServerOptions();
+    $('zb-options-saved').textContent = 'Saved. They apply on the next start.';
+    loadZomboidSettings();
+  }
 }
 
 async function saveWorldRules() {
@@ -764,9 +862,11 @@ function renderStatus(s) {
       : 'Project Zomboid setup did not finish. Ask the host to continue setup before starting the server.';
   } else if (s.status === 'starting') {
     const startup = state.startup[s.id];
-    help = startup
-      ? `${startup.label || 'Starting Minecraft server'}. Large Forge packs can take several minutes; Console shows the latest details.`
-      : 'Loading mods and the world. Large modpacks can take several minutes.';
+    help = s.game === 'zomboid'
+      ? `${(startup && startup.label) || 'Starting the Project Zomboid server'}. With many mods this can take several minutes; Console shows the latest details.`
+      : startup
+        ? `${startup.label || 'Starting Minecraft server'}. Large Forge packs can take several minutes; Console shows the latest details.`
+        : 'Loading mods and the world. Large modpacks can take several minutes.';
   } else if (s.status === 'running') {
     help = players.length ? 'Players online:' : 'Your server is up. Share the address below with your friends.';
   } else if (s.status === 'stopping') {
@@ -818,16 +918,18 @@ function renderStatus(s) {
 }
 
 function renderStartup(id) {
-  const info = state.startup[id] || { label: 'Starting Minecraft server', startedAt: Date.now() };
+  const zb = current() && current().game === 'zomboid';
+  const info = state.startup[id] || { label: zb ? 'Starting the Project Zomboid server' : 'Starting Minecraft server', startedAt: Date.now() };
   const bar = $('startup-progress-bar');
   const label = $('startup-label');
   const elapsed = $('startup-elapsed');
   if (!bar || !label || !elapsed) return;
-  label.textContent = info.label || 'Starting Minecraft server';
+  label.textContent = info.label || (zb ? 'Starting the Project Zomboid server' : 'Starting Minecraft server');
   const seconds = Math.max(0, Math.floor((Date.now() - (info.startedAt || Date.now())) / 1000));
   elapsed.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   $('startup-guidance').textContent = seconds >= 300
     ? 'This is taking a while. Check Console for errors or a stalled download; the elapsed time and current phase are shown above.'
+    : zb ? 'With many Workshop mods this can take several minutes. Check Console for details.'
     : 'Large Forge packs can take several minutes. Check Console for detailed startup output.';
   const progress = info.progress;
   const determinate = progress && Number(progress.total) > 0;
@@ -885,9 +987,32 @@ async function loadShare(id) {
   renderOnlineBox();
 }
 
+/** "How friends join" for Zomboid: the IP and port to type, and three steps. */
+function renderZomboidJoin() {
+  const s = current();
+  if (!s || s.game !== 'zomboid') return;
+  const t = state.tunnels[s.id] || {};
+  const info = state.join[s.id];
+  const address = t.address || (info && ((info.lan[0] && info.lan[0].address) || info.local)) || '';
+  const cut = address.lastIndexOf(':');
+  const ip = cut > 0 ? address.slice(0, cut) : address;
+  const port = cut > 0 ? address.slice(cut + 1) : String(s.port || 16261);
+  const box = (label, value) => el('div', { class: 'zb-join-box' }, el('span', { class: 'muted small' }, label),
+    el('div', { class: 'row' }, el('code', {}, value || '—'), value ? copyButton(value) : null));
+  fill($('zb-join'),
+    t.address ? null : el('p', { class: 'muted small' }, 'Set up the online address above so friends outside your home can join. Until then this is your home-network address.'),
+    el('div', { class: 'zb-join-boxes' }, box('IP', ip), box('Port', port)),
+    el('ol', { class: 'zb-join-steps' },
+      el('li', {}, 'Open Project Zomboid and click ', el('strong', {}, 'Join'), '.'),
+      el('li', {}, 'Click ', el('strong', {}, 'Add server'), ', paste the IP and Port above, and save.'),
+      el('li', {}, 'Pick the server and click ', el('strong', {}, 'Join'), '. Mods download by themselves.')),
+    el('p', { class: 'muted small' }, 'Whitelist on? They sign in with the username and password you made for them on the Players tab.'));
+}
+
 function renderOnlineBox() {
   const s = current();
   if (!s) return;
+  renderZomboidJoin();
   const p = state.playit;
   const t = state.tunnels[s.id] || {};
   const running = ['starting', 'running'].includes(s.status);
@@ -1183,6 +1308,90 @@ async function playerDo(player, action, args) {
   }
 }
 
+/** Zomboid items for the open server, loaded once per server. */
+async function zomboidItems() {
+  const id = state.selectedId;
+  state.itemLists = state.itemLists || {};
+  if (!state.itemLists[id]) state.itemLists[id] = api.zomboidItems(id).catch(() => []);
+  return state.itemLists[id];
+}
+
+/**
+ * Rank items for what was typed: the typed letters appearing together anywhere
+ * in the name or id first (earlier and at word starts rank higher), then names
+ * that contain the letters in order with gaps.
+ */
+function matchItems(items, query, limit = 40) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const scored = [];
+  for (const item of items) {
+    const name = item.name.toLowerCase();
+    const id = item.id.toLowerCase();
+    let score = -1;
+    let at = name.indexOf(q);
+    if (at >= 0) score = 1000 - at * 2 - name.length / 10 + (at === 0 || name[at - 1] === ' ' ? 200 : 0) + (name === q ? 500 : 0);
+    else if ((at = id.indexOf(q)) >= 0) score = 600 - at;
+    else {
+      let i = 0;
+      for (const ch of name) if (ch === q[i]) i++;
+      if (i === q.length) score = 100 - name.length / 10;
+    }
+    if (score >= 0) scored.push({ item, score });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((x) => x.item);
+}
+
+/** A text box with a dropdown of matching items. The box ends up holding the item id. */
+function itemPicker(input) {
+  const list = el('ul', { class: 'suggest-list hidden' });
+  const wrap = el('div', { class: 'suggest' }, input, list);
+  let shown = [];
+  let active = -1;
+  const highlight = (text, q) => {
+    const at = text.toLowerCase().indexOf(q.toLowerCase());
+    if (!q || at < 0) return [text];
+    return [text.slice(0, at), el('mark', {}, text.slice(at, at + q.length)), text.slice(at + q.length)];
+  };
+  const close = () => { list.classList.add('hidden'); active = -1; $('main').removeEventListener('scroll', close); };
+  const choose = (item) => { input.value = item.id; close(); };
+  const render = () => {
+    fill(list, shown.map((item, i) => el('li', {
+      class: i === active ? 'active' : '',
+      onmousedown: (e) => { e.preventDefault(); choose(item); },
+    }, el('span', { class: 's-name' }, highlight(item.name, input.value.trim())), item.mod ? el('span', { class: 's-mod' }, item.mod) : null, el('span', { class: 's-id' }, item.id))));
+    list.classList.toggle('hidden', !shown.length);
+    if (shown.length) $('main').addEventListener('scroll', close, { passive: true });
+    // Fixed position so card edges (clipped in the Neon theme) never cut the list off.
+    const r = input.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom > 220;
+    Object.assign(list.style, { left: `${r.left}px`, width: `${Math.max(r.width, 320)}px`, top: below ? `${r.bottom + 4}px` : '', bottom: below ? '' : `${window.innerHeight - r.top + 4}px` });
+  };
+  input.autocomplete = 'off';
+  input.addEventListener('input', async () => {
+    const q = input.value;
+    const items = await zomboidItems();
+    if (input.value !== q) return;
+    shown = matchItems(items, q);
+    active = shown.length ? 0 : -1;
+    render();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (list.classList.contains('hidden')) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length;
+      render();
+      list.children[active]?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && active >= 0) {
+      e.preventDefault();
+      choose(shown[active]);
+    } else if (e.key === 'Escape') close();
+  });
+  input.addEventListener('blur', () => setTimeout(close, 100));
+  return wrap;
+}
+
 function showZomboidPlayer(uuid) {
   state.playerUuid = uuid;
   document.querySelectorAll('#player-list li').forEach((li, i) => li.classList.toggle('active', state.playerList[i] && state.playerList[i].uuid === uuid));
@@ -1190,10 +1399,11 @@ function showZomboidPlayer(uuid) {
   if (!p) return;
   const s = current();
   const online = p.online && s && s.status === 'running';
-  const itemInput = el('input', { type: 'text', class: 'item', placeholder: 'Item id, e.g. Base.Axe' });
+  const itemInput = el('input', { type: 'text', class: 'item', placeholder: 'Type an item, e.g. axe or bandage' });
   const countInput = el('input', { type: 'number', class: 'count', min: 1, max: 500, value: 1 });
   const give = el('button', { class: 'btn', type: 'button' }, 'Give');
   give.disabled = !online;
+  zomboidItems();
   give.onclick = () => playerDo(p, 'give', { item: itemInput.value, count: Number(countInput.value) });
   fill($('player-detail'),
     el('div', { class: 'player-head', oncontextmenu: (e) => openPlayerMenu(e, p) },
@@ -1202,7 +1412,7 @@ function showZomboidPlayer(uuid) {
         el('h2', {}, p.name),
         el('div', { class: 'meta' }, online ? 'Online now' : p.lastPlayed ? `Offline · last seen ${new Date(p.lastPlayed).toLocaleString()}` : 'Has not joined yet'),
         el('div', { class: 'meta' }, `Role: ${p.role || (p.op ? 'admin' : 'player')}${p.banned ? ' · banned' : ''}`))),
-    el('div', { class: 'player-actions' }, itemInput, countInput, give, online ? null : el('span', { class: 'muted small' }, 'Giving items needs the player online.')),
+    el('div', { class: 'player-actions' }, itemPicker(itemInput), countInput, give, online ? null : el('span', { class: 'muted small' }, 'Giving items needs the player online.')),
     el('p', { class: 'muted small' }, 'Right-click the player for admin, teleport, god mode, kick and ban. Zomboid does not let other programs read a player\'s health or inventory, so those are not shown.'));
 }
 
@@ -1968,12 +2178,12 @@ async function updateMetrics() {
   if (!m || !document.getElementById('metrics-grid')) return;
   const rows = [
     ['CPU', m.cpuPercent == null ? '—' : `${m.cpuPercent.toFixed(1)}%`],
-    ['Java memory', m.memoryUsedMb == null ? '—' : `${formatMb(m.memoryUsedMb)} / ${formatMb(current()?.memoryMb || 0)}`],
+    [current()?.game === 'zomboid' ? 'Server memory' : 'Java memory', m.memoryUsedMb == null ? '—' : `${formatMb(m.memoryUsedMb)} / ${formatMb(current()?.memoryMb || 0)}`],
     ['Host memory', `${formatMb(m.systemMemoryUsedMb)} / ${formatMb(m.systemMemoryMb)}`],
     ['Players', `${m.playerCount} / ${m.maxPlayers || '—'}`],
     ['Tick rate', m.tps == null ? 'Unavailable' : `${m.tps.toFixed(1)} TPS${m.msPerTick != null ? ` · ${m.msPerTick} ms per tick` : ''}`],
     ['Server files', `${formatBytes(m.diskBytes)}${m.diskScanLimited ? '+' : ''}`],
-  ];
+  ].filter(([label]) => !(current()?.game === 'zomboid' && label === 'Tick rate'));
   $('metrics-grid').replaceChildren(...rows.map(([label, value], index) => {
     const card = el('div', { class: `metric${index === 5 && m.diskWarning ? ' warn' : ''}` }, el('span', { class: 'muted small' }, label), el('strong', {}, value));
     return card;
@@ -1982,6 +2192,7 @@ async function updateMetrics() {
   if (document.activeElement !== $('disk-warning-limit')) $('disk-warning-limit').value = m.diskWarningGb;
   $('metrics-note').textContent = m.diskWarning
     ? `Disk usage has passed the ${m.diskWarningGb} GB warning limit. Remove old backups or unused files.`
+    : current()?.game === 'zomboid' ? ''
     : m.tps == null ? 'The tick rate shows once the server is running (Minecraft 1.20.3+, Forge, NeoForge or Paper).'
     : m.msPerTick != null && m.msPerTick > 50 ? `The server is lagging: each tick takes ${m.msPerTick} ms (it should be under 50). Try the suggestions in "Make it run smoothly".`
     : '';
@@ -2230,7 +2441,12 @@ async function loadZomboidSettings() {
   $('zb-map').value = v.Map || 'Muldraugh, KY';
   $('zb-pause').checked = v.PauseEmpty === 'true';
   $('zb-public').checked = v.Public === 'true';
-  setupRamSlider($('zb-ram'), $('zb-ram-label'), s.memoryMb);
+  setupRamSlider($('zb-ram'), $('zb-ram-label'), s.memoryMb, $('zb-ram-hint'));
+  const suggest = () => showRamSuggestion($('zb-ram-suggest'), $('zb-ram'), $('zb-ram-label'), v.modCount || 0, Number($('zb-max').value) || 16);
+  const slide = $('zb-ram').oninput;
+  $('zb-ram').oninput = () => { slide(); suggest(); };
+  $('zb-max').oninput = suggest;
+  suggest();
   $('zb-saved').textContent = '';
 }
 
@@ -2261,6 +2477,7 @@ async function saveZomboidSettings(event) {
 async function loadSettings() {
   if ((current() && current().game === 'zomboid')) {
     loadWorldRules();
+    loadServerOptions();
     return loadZomboidSettings();
   }
   const s = current();
@@ -2324,7 +2541,12 @@ async function startServer() {
       await finishZomboidSetup();
       return;
     }
-    await attempt(() => api.start(s.id));
+    // Checking for game updates can take a while before the status changes; show it at once.
+    const button = $('srv-start');
+    button.disabled = true;
+    button.textContent = 'Starting…';
+    const ok = await attempt(() => api.start(s.id));
+    if (!ok) renderStatus(current() || s);
     return;
   }
   // Ask once for the host's username so they are put on each server's whitelist.
@@ -2697,6 +2919,9 @@ function wire() {
   $('zb-rules-search').oninput = renderWorldRules;
   $('zb-rules-save').onclick = saveWorldRules;
   $('zb-rules-reset').onclick = loadWorldRules;
+  $('zb-options-search').oninput = renderServerOptions;
+  $('zb-options-save').onclick = saveServerOptions;
+  $('zb-options-reset').onclick = loadServerOptions;
   $('mods-search').oninput = renderMods;
   $('mods-filter').onchange = renderMods;
   $('perf-refresh').onclick = loadPerformance;

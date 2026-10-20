@@ -101,6 +101,22 @@ class ZomboidProcess extends EventEmitter {
         this.startupMs = Date.now() - this.startedAt;
         this.setStatus('running');
       }
+      // Steam Workshop problems end the start with a generic Java error; name the real cause.
+      const gone = line.match(/onItemNotDownloaded itemID=(\d+) result=(\d+)/);
+      if (!this.failure && gone) {
+        this.failure = {
+          kind: 'workshop-item',
+          item: gone[1],
+          summary: `Steam could not download Workshop item ${gone[1]} (it was removed or made private).`,
+          mods: [],
+        };
+      } else if (!this.failure && /onItemQueryNotCompleted/.test(line)) {
+        this.failure = {
+          kind: 'workshop-query',
+          summary: 'Steam did not answer when the server checked its Workshop mods. This is usually a short Steam hiccup.',
+          mods: [],
+        };
+      }
       if (!this.failure && FATAL.some((re) => re.test(line))) {
         this.failure = {
           kind: /in use|bind/i.test(line) ? 'port' : /OutOfMemory/.test(line) ? 'memory' : 'crash',
@@ -161,7 +177,7 @@ class ZomboidProcess extends EventEmitter {
         this.players.clear();
         this.emit('players', []);
       }
-      this.crashed = this.status !== 'stopping' && code !== 0;
+      this.crashed = this.status !== 'stopping' && (code !== 0 || this.status === 'starting' || Boolean(this.failure));
       if (this.crashed && this.status === 'starting' && !this.failure) {
         this.failure = { kind: 'crash', summary: 'The server stopped while starting. The Console tab shows why.', mods: [] };
       }

@@ -77,6 +77,7 @@
             <label class="checkbox"><input id="zbnew-public" type="checkbox" /> List in Zomboid's public server browser</label>
           </div>
           <label>Memory: <strong id="zbnew-ram-label"></strong><input id="zbnew-ram" type="range" min="2048" step="512" /><span id="zbnew-ram-hint" class="muted small"></span></label>
+          <div class="ram-suggest" id="zbnew-ram-suggest"></div>
         </section>
         <p class="muted small zbnew-fresh-only">World rules (zombie count and speed, loot, day length, start date and about 270 more) come next: the server opens on its World rules page before its first start.</p>
         <div class="row"><button class="btn btn-primary btn-lg" type="submit">Create server</button><span id="zbnew-summary" class="muted small"></span></div>
@@ -230,12 +231,7 @@
       <div id="tab-friends" class="tab-panel hidden">
         <div class="card zb-only">
           <h3>How friends join</h3>
-          <ol class="steps-list">
-            <li>They need the same version of Project Zomboid as the server (it updates itself each time you press Start).</li>
-            <li>In Zomboid they click <strong>Join</strong>, then <strong>Add server</strong>, and type the address from <strong>Share with friends</strong>: the part before the colon goes in IP, the number after it in Port.</li>
-            <li>If the whitelist is on, they use the username and password you made for them on the Players tab. Otherwise they pick any username.</li>
-            <li>Mods download by themselves when they join. Nothing to install by hand.</li>
-          </ol>
+          <div id="zb-join"></div>
         </div>
         <div class="card">
           <h3>What your friends' Minecraft needs</h3>
@@ -495,7 +491,8 @@
             <label>Server password (optional) <input id="zb-pass" type="text" maxlength="64" placeholder="No password" /></label>
           </div>
           <label>Map <input id="zb-map" type="text" /></label>
-          <label>Memory: <strong id="zb-ram-label"></strong><input id="zb-ram" type="range" min="2048" step="512" /></label>
+          <label>Memory: <strong id="zb-ram-label"></strong><input id="zb-ram" type="range" min="2048" step="512" /><span id="zb-ram-hint" class="muted small"></span></label>
+          <div class="ram-suggest" id="zb-ram-suggest"></div>
           <div class="check-grid">
             <label class="checkbox"><input id="zb-pvp" type="checkbox" /> Players can hurt each other (PvP)</label>
             <label class="checkbox"><input id="zb-pause" type="checkbox" /> Pause the world when nobody is online</label>
@@ -504,6 +501,12 @@
           <p class="muted small">Zomboid has no server icon in its server list, so there is nothing to set for that. Changes apply on the next start.</p>
           <div class="row"><button class="btn btn-primary" type="submit">Save</button><span id="zb-saved" class="muted small"></span></div>
         </form>
+        <div id="zb-options-card" class="card zb-only">
+          <div class="map-head"><h3>All server options</h3><span class="spacer"></span><input id="zb-options-search" type="search" placeholder="Search options, e.g. safehouse, chat" autocomplete="off" /></div>
+          <p class="muted small">Everything in Zomboid's own Host settings for the server: PvP, safehouses, factions, chat, loot respawn, anti-cheat and more. Ports and mods are handled by the app, so they are not listed.</p>
+          <div id="zb-options"></div>
+          <div class="row"><button id="zb-options-save" class="btn btn-primary" type="button">Save server options</button><button id="zb-options-reset" class="btn btn-ghost" type="button">Undo changes</button><span id="zb-options-saved" class="muted small"></span></div>
+        </div>
         <div id="zb-rules-card" class="card zb-only">
           <div class="map-head"><h3>World rules</h3><span class="spacer"></span><input id="zb-rules-search" type="search" placeholder="Search rules, e.g. loot, speed" autocomplete="off" /></div>
           <p id="zb-rules-note" class="muted small">Zombies, loot, day length, the start date and everything else about the world. Most rules apply on the next start; a few (like the start date) only matter for a new world.</p>

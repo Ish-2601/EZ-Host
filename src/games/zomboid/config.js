@@ -139,7 +139,7 @@ function scanWorkshop(extraRoots = []) {
         if (!infoFile) continue;
         try {
           const info = parseModInfo(infoFile);
-          if (info.id) mods.push(info);
+          if (info.id) mods.push({ ...info, dir: path.dirname(infoFile) });
         } catch {
           // unreadable mod.info
         }

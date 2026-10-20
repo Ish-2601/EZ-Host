@@ -426,7 +426,26 @@ html[data-game="zomboid"] #tab-friends > :not(.zb-only),
 html[data-game="zomboid"] #settings-form,
 html[data-game="zomboid"] .icon-card,
 html[data-game="zomboid"] #perf-card,
-html[data-game="zomboid"] .tab[data-tab="world"] { display: none !important; }
+html[data-game="zomboid"] .tab[data-tab="world"],
+html[data-game="zomboid"] #software-card,
+html[data-game="zomboid"] #pack-update-card,
+html[data-game="zomboid"] #plugin-card,
+html[data-game="zomboid"] #bedrock-card,
+html[data-game="zomboid"] #tool-share-card { display: none !important; }
+.zb-join-boxes { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin: 6px 0 12px; }
+.zb-join-box { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.zb-join-box .row { display: flex; align-items: center; gap: 8px; }
+.zb-join-box code { font-size: 18px; font-weight: 700; word-break: break-all; }
+.suggest { position: relative; flex: 1; min-width: 220px; }
+.suggest-list { position: fixed; z-index: 300; max-height: 280px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.suggest-list li { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.suggest-list li.active, .suggest-list li:hover { background: var(--accent-soft); }
+.suggest-list .s-name mark { background: none; color: var(--accent); font-weight: 700; }
+.suggest-list .s-id { margin-left: auto; color: var(--muted); font-size: 11px; font-family: var(--mono, monospace); }
+.suggest-list .s-mod { color: var(--info); font-size: 11px; }
+.ram-suggest { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.ram-suggest:empty { display: none; }
+.zb-join-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 textarea { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; resize: vertical; }
 .zb-item { padding: 8px 10px; border-radius: 8px; }
 .zb-item-title { font-weight: 600; display: flex; align-items: center; gap: 8px; }

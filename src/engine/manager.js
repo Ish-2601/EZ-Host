@@ -1063,8 +1063,19 @@ class ServerManager extends EventEmitter {
         if (proc.failure) {
           this.lastFailure.set(id, proc.failure);
           if (['port', 'memory'].includes(proc.failure.kind)) retry = false;
+          if (proc.failure.kind === 'workshop-item') {
+            const mods = this.zomboid.dropWorkshopItems(id, [proc.failure.item]);
+            this.emit('console', id, { text: `Removed Workshop item ${proc.failure.item}${mods.length ? ` (mods: ${mods.join(', ')})` : ''} from this server because Steam no longer has it.`, stream: 'system' });
+            this.emit('mods', id);
+            proc.failure.summary += ' Self-Host MC removed it and is starting again.';
+            retry = true;
+          }
+          if (proc.failure.kind === 'workshop-query') {
+            proc.failure.summary += ' Self-Host MC is trying again.';
+            retry = true;
+          }
         }
-        if (retry && !this.shuttingDown && this.readConfig(id).autoRestart !== false) this.scheduleCrashRestart(id);
+        if (retry && !this.shuttingDown && (this.readConfig(id).autoRestart !== false || (proc.failure && /^workshop/.test(proc.failure.kind)))) this.scheduleCrashRestart(id);
       });
       this.processes.set(id, proc);
       startup('launch', 'Launching the Project Zomboid server');

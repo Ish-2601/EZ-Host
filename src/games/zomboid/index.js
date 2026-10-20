@@ -16,6 +16,9 @@ const zcfg = require('./config');
 const zmods = require('./mods');
 const sandbox = require('./sandbox');
 const workshop = require('./workshop');
+const { listItems } = require('./items');
+const { modSandboxFields } = require('./mod-sandbox');
+const serverOptions = require('./server-options');
 
 const APP_ID = 380870;
 const NAME_RE = /^[A-Za-z0-9_ .-]{1,32}$/;
@@ -34,6 +37,19 @@ class ZomboidGame {
   /** Workshop mods on this PC: the host's Steam downloads plus ones the app fetched. */
   workshop() {
     return zcfg.scanWorkshop([workshop.steamcmdWorkshopRoot(path.join(this.steamcmdDir, 'steamcmd.exe'))]);
+  }
+
+  /** Items players can be given: the game's plus the server's turned-on mods. Cached until mods change. */
+  items(id) {
+    const enabled = zcfg.splitList(zcfg.readIni(this.iniFile(id)).Mods);
+    const key = `${this.installDir}|${enabled.join(';')}`;
+    this.itemCache = this.itemCache || new Map();
+    if (this.itemCache.has(key)) return this.itemCache.get(key);
+    const wanted = new Set(enabled);
+    const mods = this.workshop().flatMap((w) => w.mods).filter((m) => wanted.has(m.id) && m.dir);
+    const items = listItems(this.installDir, mods);
+    this.itemCache.set(key, items);
+    return items;
   }
 
   cacheDir(id) {
@@ -229,19 +245,44 @@ class ZomboidGame {
     return path.join(this.cacheDir(id), 'Server', `${config.serverName}_SandboxVars.lua`);
   }
 
-  /** World rules for the editor: { fields, common }. */
+  /** World rule options added by the server's turned-on mods. */
+  modSandbox(id) {
+    const wanted = new Set(zcfg.splitList(zcfg.readIni(this.iniFile(id)).Mods));
+    return modSandboxFields(this.workshop().flatMap((w) => w.mods).filter((m) => wanted.has(m.id) && m.dir));
+  }
+
+  /** World rules for the editor: { fields, common }. Mod options carry their own names and choices. */
   sandbox(id) {
     const fields = sandbox.readSandbox(this.sandboxFile(id));
     if (!fields) return { fields: [], common: [], missing: true };
-    return { fields, common: sandbox.COMMON.filter((p) => fields.some((f) => f.path === p)) };
+    const byPath = new Map(fields.map((f) => [f.path, f]));
+    for (const mf of this.modSandbox(id)) {
+      const have = byPath.get(mf.path);
+      if (have) Object.assign(have, { ...mf, value: have.value, type: mf.type === 'choice' && have.type === 'number' ? 'choice' : have.type === 'number' && mf.type === 'number' ? 'number' : mf.type });
+      else fields.push({ ...mf, fresh: true });
+    }
+    return { fields, common: sandbox.COMMON.filter((p) => byPath.has(p)) };
   }
 
   async saveSandbox(id, values) {
     const running = Boolean(this.m.processes.get(id) && this.m.processes.get(id).child);
     if (running) throw new Error('Stop the server before changing world rules');
-    sandbox.writeSandbox(this.sandboxFile(id), values || {});
+    sandbox.writeSandbox(this.sandboxFile(id), values || {}, this.modSandbox(id));
     await this.m.updateConfig(id, { worldSetupPending: false });
     return this.sandbox(id);
+  }
+
+  /** Every server option from the .ini, with the game's descriptions: { fields }. */
+  serverOptions(id) {
+    const fields = serverOptions.readServerOptions(this.iniFile(id));
+    return fields ? { fields } : { fields: [], missing: true };
+  }
+
+  async saveServerOptions(id, values) {
+    const running = Boolean(this.m.processes.get(id) && this.m.processes.get(id).child);
+    if (running) throw new Error('Stop the server before changing server options');
+    this.writeIni(id, serverOptions.cleanServerOptions(this.iniFile(id), values));
+    return this.serverOptions(id);
   }
 
   // ---------- Workshop collections ----------
@@ -327,6 +368,42 @@ class ZomboidGame {
     return { port: Number(config.rconPort), password: config.rconPassword, multiPacket: false };
   }
 
+  /**
+   * Take Workshop items out of the server's lists: from WorkshopItems, and their
+   * mods from Mods. Returns the mod IDs removed.
+   */
+  dropWorkshopItems(id, itemIds) {
+    const drop = new Set(itemIds.map(String));
+    if (!drop.size) return [];
+    const ini = zcfg.readIni(this.iniFile(id));
+    const modsOf = new Set(this.workshop().filter((w) => drop.has(w.workshopId)).flatMap((w) => w.mods.map((m) => m.id)));
+    const mods = zcfg.splitList(ini.Mods);
+    zcfg.writeIni(this.iniFile(id), {
+      WorkshopItems: zcfg.joinList(zcfg.splitList(ini.WorkshopItems).filter((w) => !drop.has(w))),
+      Mods: zcfg.joinList(mods.filter((m) => !modsOf.has(m))),
+    });
+    this.itemCache = null;
+    return mods.filter((m) => modsOf.has(m));
+  }
+
+  /** Before a start: Workshop items Steam no longer has would stop the server, so leave them out. */
+  async removeMissingWorkshopItems(id, log) {
+    const ids = zcfg.splitList(zcfg.readIni(this.iniFile(id)).WorkshopItems);
+    if (!ids.length) return;
+    let found;
+    try {
+      found = await workshop.itemDetails(ids);
+    } catch {
+      return; // Steam's web API is unreachable; let the server try on its own
+    }
+    if (!found.size) return; // nothing came back at all: do not trust it
+    const missing = ids.filter((w) => !found.has(w));
+    if (!missing.length) return;
+    const mods = this.dropWorkshopItems(id, missing);
+    log(`Left out ${missing.length} Workshop item(s) that are no longer on Steam (${missing.join(', ')})${mods.length ? `, with their mods: ${mods.join(', ')}` : ''}. They would stop the server from starting.`);
+    this.m.emit('mods', id);
+  }
+
   /** Start the server: update it first so players on the latest version can join. */
   async createProcess(id, { log, progress }) {
     const config = this.m.readConfig(id);
@@ -336,6 +413,7 @@ class ZomboidGame {
       log(`Could not check for server updates (${err.message}); starting the installed version.`);
     }
     this.applyNetworkSettings(id);
+    await this.removeMissingWorkshopItems(id, log);
     if (config.worldSetupPending) await this.m.updateConfig(id, { worldSetupPending: false });
     return new ZomboidProcess({
       installDir: this.installDir,
@@ -503,6 +581,7 @@ class ZomboidGame {
       Map: ini.Map || '',
       PauseEmpty: ini.PauseEmpty || 'true',
       Open: ini.Open || 'true',
+      modCount: zcfg.splitList(ini.Mods).length,
     };
   }
 
