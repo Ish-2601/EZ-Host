@@ -111,11 +111,30 @@ class ZomboidGame {
       rconPassword: crypto.randomBytes(12).toString('hex'),
       adminPassword: crypto.randomBytes(12).toString('hex'),
       eulaAccepted: true, // Zomboid has no separate server licence prompt
+      setupOptions: { copyFrom, collectionId, settings },
     });
 
+    return this.beginSetup(id, { copyFrom, collectionId, settings });
+  }
+
+  /** Continue an interrupted first-time setup without creating another server. */
+  async retrySetup(id) {
+    const config = this.m.readConfig(id);
+    if (config.game !== 'zomboid') throw new Error('This is not a Project Zomboid server');
+    if (config.installed) return this.m.describe(id);
+    if (this.m.installing.has(id)) throw new Error('Project Zomboid setup is already running');
+    const options = config.setupOptions || {};
+    return this.beginSetup(id, {
+      copyFrom: options.copyFrom ?? (config.source && config.source.copyFrom) ?? null,
+      collectionId: options.collectionId || null,
+      settings: options.settings || null,
+    });
+  }
+
+  beginSetup(id, { copyFrom = null, collectionId = null, settings = null } = {}) {
     this.m.installing.add(id);
     this.m.emit('status', id, 'installing');
-    const lines = [];
+    const lines = this.m.installLogs.get(id) || [];
     this.m.installLogs.set(id, lines);
     const log = (message) => {
       lines.push({ text: message, stream: 'system', time: Date.now() });
@@ -134,7 +153,8 @@ class ZomboidGame {
         log(`Copied your "${copyFrom}" settings, mods and world options.`);
       }
       this.applyNetworkSettings(id);
-      if (!copyFrom) await this.prepareFreshWorld(id, { log, progress });
+      const hasGeneratedSettings = fs.existsSync(this.iniFile(id)) && fs.existsSync(this.sandboxFile(id));
+      if (!copyFrom && !hasGeneratedSettings) await this.prepareFreshWorld(id, { log, progress });
       const config = this.m.readConfig(id);
       const ini = this.ini(id);
       const listOn = this.m.appSettings ? this.m.appSettings().defaultWhitelist : false;
@@ -150,6 +170,7 @@ class ZomboidGame {
         installError: null,
         packName: copyFrom ? `Copy of ${copyFrom}` : collectionId ? 'Workshop collection' : 'Project Zomboid',
         worldSetupPending: !copyFrom,
+        setupOptions: null,
       });
       log(copyFrom ? 'Install complete. Press Start.' : 'Install complete. Choose your world rules in Settings, then press Start.');
     })()

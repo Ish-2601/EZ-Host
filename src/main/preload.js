@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('api', {
   onPlayers: subscribe('server:players'),
   zomboidLocalConfigs: invoke('zomboid:localConfigs'),
   createZomboid: invoke('servers:createZomboid'),
+  retryZomboidSetup: invoke('servers:retryZomboidSetup'),
   zomboidSettings: invoke('zomboid:settings'),
   saveZomboidSettings: invoke('zomboid:saveSettings'),
   zomboidCollections: invoke('zomboid:collections'),

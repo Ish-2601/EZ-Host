@@ -751,11 +751,17 @@ function renderStatus(s) {
   let problem = false;
 
   if (s.status === 'installing') {
-    help = 'Setting everything up. Big modpacks can take a few minutes.';
+    help = s.game === 'zomboid'
+      ? 'Finishing Project Zomboid setup. The first install downloads the dedicated server and creates its world settings.'
+      : 'Setting everything up. Big modpacks can take a few minutes.';
   } else if (s.installError) {
     problem = true;
     dot = 'error';
     help = s.installError;
+  } else if (s.game === 'zomboid' && !s.installed) {
+    help = hasPermission('settings')
+      ? 'Project Zomboid setup did not finish. Continue setup to resume it; existing server files and world settings will be kept.'
+      : 'Project Zomboid setup did not finish. Ask the host to continue setup before starting the server.';
   } else if (s.status === 'starting') {
     const startup = state.startup[s.id];
     help = startup
@@ -786,9 +792,18 @@ function renderStatus(s) {
   $('status-help').textContent = help;
 
   const live = ['starting', 'running', 'stopping'].includes(s.status);
-  $('srv-start').classList.toggle('hidden', live);
+  const canResumeZomboidSetup = s.game === 'zomboid' && !s.installed && s.status !== 'installing' && !live;
+  const startButton = $('srv-start');
+  startButton.classList.toggle('hidden', live || s.status === 'installing');
+  startButton.textContent = canResumeZomboidSetup
+    ? (s.installError ? 'Retry setup' : 'Finish setup')
+    : 'Start server';
   $('srv-stop').classList.toggle('hidden', !live);
-  $('srv-start').disabled = s.status === 'installing' || !s.installed;
+  startButton.disabled = s.status === 'installing'
+    || (canResumeZomboidSetup ? !hasPermission('settings') : !s.installed);
+  startButton.title = canResumeZomboidSetup && !hasPermission('settings')
+    ? 'Ask the host to finish Project Zomboid setup'
+    : '';
   $('srv-stop').disabled = s.status === 'stopping';
   $('command-input').disabled = !live;
 
@@ -2305,6 +2320,10 @@ async function startServer() {
   const s = current();
   if (!s) return;
   if (s.game === 'zomboid') {
+    if (!s.installed) {
+      await finishZomboidSetup();
+      return;
+    }
     await attempt(() => api.start(s.id));
     return;
   }
@@ -2324,6 +2343,21 @@ async function startServer() {
     return;
   }
   await attempt(() => api.start(s.id));
+}
+
+async function finishZomboidSetup() {
+  const s = current();
+  if (!s || s.game !== 'zomboid' || s.installed) return;
+  const button = $('srv-start');
+  button.disabled = true;
+  button.textContent = 'Resuming setup…';
+  const started = await attempt(() => api.retryZomboidSetup(s.id));
+  if (started) {
+    await refreshServers();
+    toast('Setup resumed. Progress is shown in the Console tab.');
+  } else {
+    renderStatus(current() || s);
+  }
 }
 
 // ---------- wiring ----------

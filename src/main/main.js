@@ -57,7 +57,7 @@ const CHANNEL_PERMISSION = {
   'servers:exportStatusPage': 'server', 'system:copy': 'server', 'system:totalMemoryMb': 'server',
   'settings:notifications': 'settings', 'settings:setNotifications': 'settings',
   'minecraft:versions': 'server',
-  'zomboid:localConfigs': 'server', 'servers:createZomboid': 'settings', 'zomboid:settings': 'settings', 'zomboid:saveSettings': 'settings',
+  'zomboid:localConfigs': 'server', 'servers:createZomboid': 'settings', 'servers:retryZomboidSetup': 'settings', 'zomboid:settings': 'settings', 'zomboid:saveSettings': 'settings',
   'zomboid:collections': 'server', 'zomboid:previewCollection': 'server', 'zomboid:installCollection': 'settings', 'zomboid:sandbox': 'settings', 'zomboid:saveSandbox': 'settings',
   'settings:app': 'server', 'settings:setApp': 'settings',
   'mods:overview': 'server', 'mods:setEnabled': 'settings',
@@ -414,6 +414,7 @@ function registerIpc() {
   handle('settings:hostName', () => manager.hostName());
   handle('zomboid:localConfigs', () => manager.zomboid.localConfigs());
   handle('servers:createZomboid', (opts) => manager.zomboid.create(opts || {}));
+  handle('servers:retryZomboidSetup', (id) => manager.zomboid.retrySetup(id));
   handle('zomboid:settings', (id) => manager.zomboid.settings(id));
   handle('zomboid:saveSettings', (id, values) => manager.zomboid.saveSettings(id, values || {}));
   handle('zomboid:collections', () => manager.zomboid.listCollections());
