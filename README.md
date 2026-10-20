@@ -29,7 +29,7 @@ That's it. Java, mod loaders, the Zomboid dedicated server and everything else d
 
 > **"Windows protected your PC"?** The installer isn't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
 
-The release also has an **`EZ-Host-<version>-portable.zip`**. Unzip it anywhere and run `EZ Host.exe` if you'd rather not install anything.
+The release also has an **`EZ-Host-portable-<version>.zip`**. Unzip it anywhere and run `EZ Host.exe` if you'd rather not install anything.
 
 ## Quick start
 
