@@ -6,3 +6,7 @@ out/
 *.log
 .dev-data-ui/
 .dev-data-mr/
+
+# Installer copy in the top folder, and local leftovers
+/*.exe
+.codex-preserve-before-main-sync/

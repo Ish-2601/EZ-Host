@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/renderer/icon.svg" width="120" alt="EZ Host logo" />
+  <img src="../data/src/renderer/icon.svg" width="120" alt="EZ Host logo" />
 </p>
 
 <h1 align="center">EZ Host</h1>
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/server.png" width="860" alt="EZ Host running a Minecraft server" />
+  <img src="../data/docs/screenshots/server.png" width="860" alt="EZ Host running a Minecraft server" />
 </p>
 
 ---
@@ -58,11 +58,11 @@ The release also has an **`EZ-Host-portable-<version>.zip`**. Unzip it anywhere 
 - **Make it yours.** Choose the HUD, Neon or Classic theme, then pick the accent colour, panel style, background, spacing and status strip.
 
 <p align="center">
-  <img src="docs/screenshots/zomboid-map.png" width="49%" alt="Project Zomboid map with players" />
-  <img src="docs/screenshots/zomboid-players.png" width="49%" alt="Editing a Project Zomboid player" />
+  <img src="../data/docs/screenshots/zomboid-map.png" width="49%" alt="Project Zomboid map with players" />
+  <img src="../data/docs/screenshots/zomboid-players.png" width="49%" alt="Editing a Project Zomboid player" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/settings.png" width="60%" alt="Look settings" />
+  <img src="../data/docs/screenshots/settings.png" width="60%" alt="Look settings" />
 </p>
 
 ## FAQ
@@ -87,14 +87,15 @@ playit.gg only gives UDP addresses (which Zomboid uses) to accounts with a verif
 
 ## Build from source
 
-You need Node.js 20+ on Windows.
+You need Node.js 20+ on Windows. Everything lives in the `data` folder.
 
 ```bash
+cd data
 npm install
 npm start
 ```
 
-To build the installer (`dist/EZ-Host-Setup-<version>.exe`):
+To build the installer (`data/dist/EZ-Host-Setup-<version>.exe`):
 
 ```bash
 npm run dist
@@ -111,14 +112,14 @@ npm run test:engine
 | `src/engine/` | The server engine (plain Node): Minecraft installs, Java, mod loaders, processes, RCON, playit.gg, backups |
 | `src/games/zomboid/` | Project Zomboid: SteamCMD, server runner, settings, Workshop, map |
 | `src/main/` | Electron main process and the preload bridge |
-| `src/renderer/` | The UI (plain HTML, CSS and JS). The look is described in [DESIGN.md](DESIGN.md) |
+| `src/renderer/` | The UI (plain HTML, CSS and JS). The look is described in [DESIGN.md](../data/DESIGN.md) |
 | `scripts/` | Smoke tests and the icon renderer |
 
-See [ROADMAP.md](ROADMAP.md) for what comes next.
+See [ROADMAP.md](../data/ROADMAP.md) for what comes next.
 
 ## Licence and credits
 
-- EZ Host is released under the [MIT licence](LICENSE).
-- The logo and themes are original artwork for this app. The bundled fonts (Rajdhani, Barlow, Share Tech Mono) are under the SIL Open Font License; see `src/renderer/fonts/OFL-*.txt`.
+- EZ Host is released under the [MIT licence](../data/LICENSE).
+- The logo and themes are original artwork for this app. The bundled fonts (Rajdhani, Barlow, Share Tech Mono) are under the SIL Open Font License; see `data/src/renderer/fonts/OFL-*.txt`.
 - Minecraft servers require you to accept the [Minecraft EULA](https://aka.ms/MinecraftEULA). The app asks before a server's first start.
 - EZ Host isn't affiliated with Mojang, Microsoft, The Indie Stone, Valve or playit.gg. Minecraft and Project Zomboid are trademarks of their owners.
