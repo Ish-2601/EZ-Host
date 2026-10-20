@@ -1,6 +1,6 @@
 // Finds the Minecraft profiles (instances) people play from on this PC, so a
 // server can be built from one, or checked against one.
-// Supported: CurseForge app and Prism Launcher.
+// Supported: CurseForge app, Prism Launcher and the Modrinth App.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -126,8 +126,100 @@ function prismProfiles() {
 }
 
 /** Every profile found on this PC, most recently played first. */
+// ---------- Modrinth App ----------
+
+const MODRINTH_LOADERS = { fabric: 'fabric', forge: 'forge', neoforge: 'neoforge', quilt: 'quilt', vanilla: 'vanilla' };
+
+function modrinthRoots() {
+  const appData = process.env.APPDATA || path.join(os.homedir(), '.local', 'share');
+  // Current versions use ModrinthApp; older ones used com.modrinth.theseus.
+  return [path.join(appData, 'ModrinthApp'), path.join(appData, 'com.modrinth.theseus')].filter(isDir);
+}
+
+function toIso(value) {
+  if (!value) return null;
+  const n = Number(value);
+  const date = Number.isFinite(n) ? new Date(n > 1e12 ? n : n * 1000) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/** Profiles from the Modrinth App database (app.db, SQLite). */
+function modrinthDbProfiles(root) {
+  const dbFile = path.join(root, 'app.db');
+  if (!fs.existsSync(dbFile)) return null;
+  let DatabaseSync;
+  try {
+    ({ DatabaseSync } = require('node:sqlite'));
+  } catch {
+    return null;
+  }
+  let db;
+  try {
+    db = new DatabaseSync(dbFile, { readOnly: true });
+    const rows = db.prepare('SELECT * FROM profiles').all();
+    return rows.map((row) => {
+      const folder = row.path || row.name;
+      const loader = MODRINTH_LOADERS[String(row.mod_loader || row.loader || 'vanilla').toLowerCase()] || 'vanilla';
+      return {
+        launcher: 'modrinth',
+        launcherName: 'Modrinth App',
+        name: row.name || folder,
+        dir: path.join(root, 'profiles', folder),
+        gameDir: path.join(root, 'profiles', folder),
+        minecraft: row.game_version || null,
+        loader,
+        loaderVersion: loader === 'vanilla' ? null : row.mod_loader_version || row.loader_version || null,
+        lastPlayed: toIso(row.last_played),
+        modpack: null,
+      };
+    });
+  } catch {
+    return null;
+  } finally {
+    try {
+      if (db) db.close();
+    } catch {
+      // already closed
+    }
+  }
+}
+
+/** Older Modrinth App versions kept a profile.json in each profile folder. */
+function modrinthJsonProfiles(root) {
+  const profilesDir = path.join(root, 'profiles');
+  if (!isDir(profilesDir)) return [];
+  const out = [];
+  for (const folder of fs.readdirSync(profilesDir)) {
+    const dir = path.join(profilesDir, folder);
+    const json = readJson(path.join(dir, 'profile.json'));
+    if (!json) continue;
+    const meta = json.metadata || json;
+    const loader = MODRINTH_LOADERS[String(meta.loader || 'vanilla').toLowerCase()] || 'vanilla';
+    const lv = meta.loader_version;
+    out.push({
+      launcher: 'modrinth',
+      launcherName: 'Modrinth App',
+      name: meta.name || folder,
+      dir,
+      gameDir: dir,
+      minecraft: meta.game_version || null,
+      loader,
+      loaderVersion: loader === 'vanilla' ? null : (lv && (lv.id || lv)) || null,
+      lastPlayed: toIso(meta.last_played),
+      modpack: null,
+    });
+  }
+  return out;
+}
+
+function modrinthProfiles() {
+  const out = [];
+  for (const root of modrinthRoots()) out.push(...(modrinthDbProfiles(root) || modrinthJsonProfiles(root)));
+  return out.filter((p) => isDir(p.gameDir));
+}
+
 function listProfiles() {
-  const profiles = [...curseForgeProfiles(), ...prismProfiles()].map((p) => ({
+  const profiles = [...curseForgeProfiles(), ...prismProfiles(), ...modrinthProfiles()].map((p) => ({
     ...p,
     id: `${p.launcher}:${p.dir}`,
     modCount: listModJars(p.gameDir).length,

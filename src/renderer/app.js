@@ -1701,7 +1701,7 @@ async function loadFriends() {
   select.replaceChildren(
     ...state.profiles.map((p) => el('option', { value: p.id }, `${p.name} (${p.launcherName}, Minecraft ${p.minecraft || '?'}, ${p.modCount} mods)`))
   );
-  if (!state.profiles.length) select.replaceChildren(el('option', {}, 'No CurseForge or Prism profiles found'));
+  if (!state.profiles.length) select.replaceChildren(el('option', {}, 'No CurseForge, Modrinth App or Prism profiles found'));
   $('check-btn').disabled = !state.profiles.length || !s.installed;
 }
 
