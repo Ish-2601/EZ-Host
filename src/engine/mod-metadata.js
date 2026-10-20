@@ -30,6 +30,10 @@ function fromFabric(json) {
     ids,
     depends: depends.filter((d) => !['minecraft', 'java', 'fabricloader', 'fabric', 'quilt_loader'].includes(d)),
     javaMin: json.depends && json.depends.java ? minJavaFromRange(json.depends.java) : 0,
+    name: json.name || json.id || null,
+    version: json.version || null,
+    description: typeof json.description === 'string' ? json.description : null,
+    environment: json.environment || '*',
   };
 }
 
@@ -44,13 +48,18 @@ function fromQuilt(json) {
     if (id === 'java') javaMin = Math.max(javaMin, minJavaFromRange(d.versions || ''));
     else if (!['minecraft', 'quilt_loader', 'fabricloader'].includes(id)) depends.push(id);
   }
-  return { ids, depends, javaMin };
+  const meta = loader.metadata || {};
+  const env = json.minecraft && json.minecraft.environment;
+  return { ids, depends, javaMin, name: meta.name || loader.id || null, version: loader.version || null, description: meta.description || null, environment: env === 'client' ? 'client' : '*' };
 }
 
 /** Minimal parse of mods.toml / neoforge.mods.toml: mod ids and required, server-relevant dependencies. */
 function fromModsToml(text) {
   const ids = [];
   const depends = [];
+  let name = null;
+  let version = null;
+  let description = null;
   const blocks = text.split(/^\s*\[\[/m);
   for (const block of blocks) {
     const header = block.slice(0, block.indexOf(']]'));
@@ -61,6 +70,11 @@ function fromModsToml(text) {
     if (header === 'mods') {
       const id = field('modId');
       if (id) ids.push(id);
+      if (!name) name = field('displayName');
+      const v = field('version');
+      if (!version && v && !v.includes('${')) version = v;
+      const d = block.match(/^\s*description\s*=\s*'''([\s\S]*?)'''|^\s*description\s*=\s*"([^"]*)"/m);
+      if (!description && d) description = (d[1] || d[2] || '').trim();
     } else if (header.startsWith('dependencies')) {
       const id = field('modId');
       const mandatory = field('mandatory');
@@ -70,10 +84,10 @@ function fromModsToml(text) {
       if (id && required && side !== 'CLIENT' && !['minecraft', 'forge', 'neoforge'].includes(id)) depends.push(id);
     }
   }
-  return { ids, depends, javaMin: 0 };
+  return { ids, depends, javaMin: 0, name, version, description, environment: '*' };
 }
 
-/** { ids, depends, javaMin } for a mod jar, or null if it has no metadata we understand. */
+/** { ids, depends, javaMin, name, version, description, environment } for a mod jar, or null if it has no metadata we understand. */
 function readModInfo(jarPath) {
   let zip;
   try {

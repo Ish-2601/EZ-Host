@@ -29,9 +29,25 @@ const backupLib = require('./backups');
 const serverFiles = require('./server-files');
 const paper = require('./paper');
 const AdmZip = require('adm-zip');
+const modsLib = require('./mods');
 const { readIndex, describeDependencies } = require('./mrpack');
 
 const CONFIG_FILE = 'selfhost.json';
+
+const PERF_MOD_NAMES = {
+  lithium: 'Lithium',
+  'ferrite-core': 'FerriteCore',
+  krypton: 'Krypton',
+  modernfix: 'ModernFix',
+  canary: 'Canary',
+};
+const PERF_MOD_INFO = {
+  lithium: 'Faster game logic: mobs, blocks and physics. No gameplay changes.',
+  'ferrite-core': 'Uses much less memory, especially in big modpacks.',
+  krypton: 'Faster networking for many players.',
+  modernfix: 'Faster startup and less memory use for modded servers.',
+  canary: 'Lithium-style game-logic speedups for Forge 1.20 and older.',
+};
 
 function nextOccurrence(task, after = new Date()) {
   const [hour, minute] = String(task.time || '03:00').split(':').map(Number);
@@ -104,6 +120,7 @@ class ServerManager extends EventEmitter {
     this.crashStableTimers = new Map();
     this.metricSamples = new Map();
     this.lastTps = new Map();
+    this.lastFailure = new Map(); // server id -> why the last start failed
     this.actor = 'Host';
     this.restartTimers = new Map();
     this.taskTimers = new Map();
@@ -130,7 +147,10 @@ class ServerManager extends EventEmitter {
 
   async writeConfig(config) {
     const file = path.join(this.serverDir(config.id), CONFIG_FILE);
-    await fsp.writeFile(file, JSON.stringify(config, null, 2));
+    // Write a temporary file and swap it in, so a read never sees a half-written config.
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await fsp.writeFile(tmp, JSON.stringify(config, null, 2));
+    await fsp.rename(tmp, file);
     this.emit('changed');
     return config;
   }
@@ -172,6 +192,8 @@ class ServerManager extends EventEmitter {
         const found = output.match(/TPS from last\s+1m[^:]*:\s*([\d.]+)/i);
         if (found) this.lastTps.set(id, Number(found[1]));
       } catch {}
+    } else if (this.isRunning(id)) {
+      await this.sampleTick(id).catch(() => {});
     }
     const pid = proc && proc.child && Number(proc.child.pid);
     let processMemoryMb = null;
@@ -231,6 +253,7 @@ class ServerManager extends EventEmitter {
       maxPlayers: Number(properties['max-players']) || 0,
       diskBytes, diskWarningGb, diskWarning,
       diskScanLimited: visited >= 100000, tps: this.lastTps.get(id) ?? null,
+      msPerTick: this.lastMspt ? this.lastMspt.get(id) ?? null : null,
     };
   }
 
@@ -258,7 +281,14 @@ class ServerManager extends EventEmitter {
     if (this.startupStates.has(id)) status = this.startupStates.get(id).cancelRequested ? 'stopping' : 'starting';
     if (this.installing.has(id)) status = 'installing';
     const crashed = Boolean(proc && proc.crashed && status === 'stopped');
-    return { ...config, status, crashed, dir: this.serverDir(id), startup: this.startupStates.get(id) || null };
+    return {
+      ...config,
+      status,
+      crashed,
+      dir: this.serverDir(id),
+      startup: this.startupStates.get(id) || null,
+      lastFailure: crashed ? this.lastFailure.get(id) || null : null,
+    };
   }
 
   /** Install messages followed by the running server's console lines. */
@@ -626,19 +656,30 @@ class ServerManager extends EventEmitter {
       await this.setupWhitelist(id, { deferProfileLookup: true });
       throwIfCancelled();
       startup('launch', config.loader === 'forge' ? 'Launching the Forge server' : 'Launching the Minecraft server');
+      const modsDir = path.join(this.serverDir(id), 'mods');
+      const modCount = fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter((f) => f.endsWith('.jar')).length : 0;
+      fs.mkdirSync(path.join(this.serverDir(id), '.selfhost'), { recursive: true });
+      this.lastFailure.delete(id);
       const proc = new ServerProcess({
         javaPath,
         serverDir: this.serverDir(id),
         launch: config.launch,
         memoryMb: config.memoryMb,
+        javaMajor: config.javaMajor,
+        lastStartMs: config.lastStartMs || 0,
+        modCount,
+      });
+      // Percent and stage from the server's own log, shown as the startup bar.
+      proc.on('progress', (p) => {
+        if (!this.startupStates.has(id)) return;
+        const label = p.failure ? p.failure.summary : p.stalled ? `${p.stage} (no output for 3 minutes; it may be stuck)` : p.stage;
+        startup('loading', label, { done: p.percent, total: 100 });
       });
       proc.on('line', (text, stream) => {
         this.emit('console', id, { text, stream });
         const tps = text.match(/TPS from last\s+1m[^:]*:\s*([\d.]+)/i);
         if (tps) this.lastTps.set(id, Number(tps[1]));
         this.trackPregen(id, text);
-        const phase = startupPhaseFromLine(text);
-        if (phase && this.startupStates.has(id)) startup(phase.phase, phase.label);
         const refused = text.match(/Disconnecting (\w{3,16}) .*not white-listed/);
         if (refused) {
           this.refusedNames(id).add(refused[1]);
@@ -652,6 +693,7 @@ class ServerManager extends EventEmitter {
       });
       proc.on('status', (status) => {
         if (status === 'running') {
+          if (proc.startupMs) this.updateConfig(id, { lastStartMs: proc.startupMs }).catch(() => {});
           this.startupStates.delete(id);
           this.emit('startup', id, { phase: 'ready', label: 'Server is ready', startedAt });
           clearTimeout(this.crashStableTimers.get(id));
@@ -684,7 +726,14 @@ class ServerManager extends EventEmitter {
         // Stop the playit agent once no server is left running.
         const anyRunning = [...this.processes.values()].some((p) => p.child);
         if (!anyRunning) this.playit.stop().catch(() => {});
-        if (proc.crashed && !this.shuttingDown && this.readConfig(id).autoRestart !== false) this.scheduleCrashRestart(id);
+        let retry = proc.crashed;
+        if (proc.failure) {
+          this.lastFailure.set(id, proc.failure);
+          const fixed = this.handleStartupFailure(id, proc.failure);
+          // Restarting cannot fix a busy port or too little memory.
+          if (['port', 'memory'].includes(proc.failure.kind) && !fixed.length) retry = false;
+        }
+        if (retry && !this.shuttingDown && this.readConfig(id).autoRestart !== false) this.scheduleCrashRestart(id);
       });
       this.processes.set(id, proc);
       proc.start();
@@ -699,6 +748,232 @@ class ServerManager extends EventEmitter {
       if (cancelled) return this.describe(id);
       throw err;
     }
+  }
+
+  // ---------- performance ----------
+
+  /**
+   * Ask the server how long a tick takes. Forge and NeoForge have their own
+   * tps command; vanilla, Fabric and Quilt 1.20.3+ have /tick query.
+   * Healthy is 20 ticks per second, which needs under 50 ms per tick.
+   */
+  async sampleTick(id) {
+    const config = this.readConfig(id);
+    const commands = config.loader === 'forge' ? ['forge tps'] : config.loader === 'neoforge' ? ['neoforge tps'] : ['tick query'];
+    for (const cmd of commands) {
+      const out = await this.rcon(id, cmd);
+      // Forge/NeoForge: "Overall: Mean tick time: 12.345 ms. Mean TPS: 20.000"
+      const overall = out.match(/Overall\s*:\s*Mean tick time:\s*([\d.]+)\s*ms\.?\s*Mean TPS:\s*([\d.]+)/i);
+      // Vanilla: "Average time per tick: 3.2ms (Target: 50.0ms)"
+      const vanilla = out.match(/Average time per tick:\s*([\d.]+)\s*ms/i);
+      const mspt = overall ? Number(overall[1]) : vanilla ? Number(vanilla[1]) : null;
+      if (mspt == null) continue;
+      if (!this.lastMspt) this.lastMspt = new Map();
+      this.lastMspt.set(id, Math.round(mspt * 10) / 10);
+      this.lastTps.set(id, overall ? Math.min(20, Number(overall[2])) : Math.min(20, 1000 / Math.max(mspt, 50)));
+      return;
+    }
+  }
+
+  /** Memory that suits this many mods, capped so Windows keeps enough for itself. */
+  recommendedMemoryMb(modCount) {
+    const want = modCount === 0 ? 3072 : modCount < 80 ? 4096 : modCount < 160 ? 6144 : modCount < 260 ? 8192 : 10240;
+    const cap = Math.floor((os.totalmem() / 1048576) * 0.6 / 512) * 512;
+    return Math.max(2048, Math.min(want, cap));
+  }
+
+  /** Mods that make servers faster without changing gameplay, per loader. */
+  performanceModSlugs(loader) {
+    if (loader === 'fabric' || loader === 'quilt') return ['lithium', 'ferrite-core', 'krypton', 'modernfix'];
+    if (loader === 'neoforge') return ['lithium', 'ferrite-core', 'modernfix'];
+    if (loader === 'forge') return ['ferrite-core', 'modernfix', 'canary'];
+    return [];
+  }
+
+  /** What would make this server run smoother, with the current values. */
+  async performanceAdvice(id) {
+    const config = this.readConfig(id);
+    const props = this.readProperties(id);
+    const modsDir = path.join(this.serverDir(id), 'mods');
+    const modCount = fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter((f) => f.endsWith('.jar')).length : 0;
+    const modded = config.loader && config.loader !== 'vanilla';
+    const settings = [
+      { key: 'view-distance', label: 'View distance', recommended: modded ? '8' : '10', why: 'How far players see. Each step adds many chunks the server must send.' },
+      { key: 'simulation-distance', label: 'Simulation distance', recommended: modded ? '6' : '8', why: 'How far away mobs, farms and redstone keep running. The biggest lag setting.' },
+      { key: 'sync-chunk-writes', label: 'Wait for each chunk save', recommended: 'false', why: 'Saving in the background avoids freezes when the world saves.' },
+      { key: 'network-compression-threshold', label: 'Network compression threshold', recommended: '256', why: 'Compresses fewer tiny packets, which saves CPU.' },
+    ].map((x) => ({ ...x, current: props[x.key] ?? null }));
+
+    let perfMods = [];
+    if (modded && config.minecraft) {
+      const jars = await launchers.hashModJars(this.serverDir(id)).catch(() => []);
+      const have = await modrinth.projectIdsForHashes(jars.map((j) => j.sha1)).catch(() => new Set());
+      perfMods = await Promise.all(this.performanceModSlugs(config.loader).map(async (slug) => {
+        const version = await modrinth.getCompatibleVersion(slug, config.loader, config.minecraft).catch(() => null);
+        if (!version) return null;
+        return { slug, name: PERF_MOD_NAMES[slug] || slug, installed: have.has(version.projectId), what: PERF_MOD_INFO[slug] || '' };
+      }));
+      perfMods = perfMods.filter(Boolean);
+    }
+    return {
+      modCount,
+      memoryMb: config.memoryMb,
+      recommendedMemoryMb: this.recommendedMemoryMb(modCount),
+      systemMemoryMb: Math.round(os.totalmem() / 1048576),
+      javaTuned: true,
+      settings,
+      perfMods,
+    };
+  }
+
+  /** Apply the recommended settings from performanceAdvice. They take effect on the next start. */
+  async applyPerformanceSettings(id) {
+    const advice = await this.performanceAdvice(id);
+    const patch = {};
+    for (const s of advice.settings) patch[s.key] = s.recommended;
+    await this.writeProperties(id, patch);
+    return advice.settings.map((s) => s.label);
+  }
+
+  async installPerformanceMods(id, slugs) {
+    const proc = this.processes.get(id);
+    if ((proc && proc.child) || this.startupStates.has(id)) throw new Error('Stop the server before adding mods');
+    const allowed = new Set(this.performanceModSlugs(this.readConfig(id).loader));
+    for (const slug of slugs) {
+      if (!allowed.has(slug)) throw new Error(`${slug} is not one of the suggested mods`);
+      await this.installMod(id, slug);
+    }
+    this.emit('mods', id);
+  }
+
+  // ---------- server icon ----------
+
+  serverIcon(id) {
+    const file = path.join(this.serverDir(id), 'server-icon.png');
+    return fs.existsSync(file) ? `data:image/png;base64,${fs.readFileSync(file).toString('base64')}` : null;
+  }
+
+  /** Save a 64x64 PNG (already resized by the app) as the icon players see in their server list. */
+  async setServerIcon(id, png) {
+    if (!png) {
+      await fsp.rm(path.join(this.serverDir(id), 'server-icon.png'), { force: true });
+      return null;
+    }
+    const buf = Buffer.from(png);
+    if (buf.readUInt32BE(16) !== 64 || buf.readUInt32BE(20) !== 64) throw new Error('The icon must be 64 by 64 pixels');
+    await fsp.writeFile(path.join(this.serverDir(id), 'server-icon.png'), buf);
+    return this.serverIcon(id);
+  }
+
+  // ---------- mods ----------
+
+  /**
+   * After a failed start: turn off mods that crashed because they only work
+   * in the game (not on a server), and remember every failing mod so the Mods
+   * tab can show it. Returns the names of mods that were turned off.
+   */
+  handleStartupFailure(id, failure) {
+    if (!failure.mods || !failure.mods.length) return [];
+    const serverDir = this.serverDir(id);
+    let mods;
+    try {
+      mods = modsLib.listMods(serverDir);
+    } catch {
+      return [];
+    }
+    const config = this.readConfig(id);
+    const issues = (config.modIssues || []).filter((i) => !failure.mods.some((f) => (i.modIds || []).includes(f.modId)));
+    const turnedOff = [];
+    for (const f of failure.mods) {
+      const matches = modsLib.findByModIds(mods, [f.modId]);
+      for (const m of matches) {
+        if (f.clientOnly) {
+          try {
+            fs.mkdirSync(path.join(serverDir, modsLib.DISABLED_DIR), { recursive: true });
+            fs.renameSync(path.join(serverDir, modsLib.ENABLED_DIR, m.fileName), path.join(serverDir, modsLib.DISABLED_DIR, m.fileName));
+            turnedOff.push(f.name);
+          } catch {
+            // leave it on; the issue below still points at it
+          }
+        }
+        issues.push({
+          fileName: m.fileName,
+          name: f.name,
+          modIds: m.ids,
+          kind: f.clientOnly ? 'client-only' : 'failed',
+          reason: f.clientOnly
+            ? 'Only works in the game, not on a server. It crashed the server while starting.'
+            : 'Failed to load while the server was starting. The Console tab shows the error.',
+          autoDisabled: f.clientOnly,
+          at: new Date().toISOString(),
+        });
+      }
+    }
+    const cfgFile = path.join(serverDir, CONFIG_FILE);
+    fs.writeFileSync(`${cfgFile}.tmp`, JSON.stringify({ ...this.readConfig(id), modIssues: issues }, null, 2));
+    fs.renameSync(`${cfgFile}.tmp`, cfgFile);
+    if (turnedOff.length) {
+      this.emit('console', id, { text: `Turned off ${turnedOff.length} mod(s) that only work in the game, not on a server: ${turnedOff.join(', ')}. You can turn them back on in the Mods tab.`, stream: 'system' });
+      this.emit('attention', id, 'mods-disabled');
+    }
+    this.emit('mods', id);
+    this.emit('changed');
+    return turnedOff;
+  }
+
+  /** Every mod with its on/off state, plus known problems and what depends on what. */
+  async modsOverview(id) {
+    const serverDir = this.serverDir(id);
+    const mods = modsLib.listMods(serverDir);
+    const config = this.readConfig(id);
+    // Ask Modrinth once per jar which mods do not run on servers.
+    const flagsFile = path.join(serverDir, '.selfhost', 'modrinth-sides.json');
+    let flags = {};
+    try {
+      flags = JSON.parse(fs.readFileSync(flagsFile, 'utf8'));
+    } catch {
+      // first look
+    }
+    const unknown = mods.map((m) => m.sha1).filter((h) => !(h in flags));
+    if (unknown.length) {
+      try {
+        const clientOnly = await modrinth.findClientOnlyFiles(unknown);
+        for (const h of unknown) flags[h] = clientOnly.has(h) ? 'client' : 'ok';
+        fs.writeFileSync(flagsFile, JSON.stringify(flags));
+      } catch {
+        // offline: show what we know
+      }
+    }
+    const needs = modsLib.dependents(mods);
+    const issues = config.modIssues || [];
+    return {
+      loader: config.loader,
+      running: Boolean(this.processes.get(id) && this.processes.get(id).child) || this.startupStates.has(id),
+      mods: mods.map((m) => ({
+        fileName: m.fileName,
+        name: m.name,
+        version: m.version,
+        description: m.description,
+        enabled: m.enabled,
+        size: m.size,
+        clientOnly: flags[m.sha1] === 'client' || m.environment === 'client',
+        issue: issues.find((i) => i.fileName === m.fileName) || null,
+        neededBy: needs[m.fileName] || [],
+      })),
+    };
+  }
+
+  async setModEnabled(id, fileName, enabled) {
+    const proc = this.processes.get(id);
+    if ((proc && proc.child) || this.startupStates.has(id)) throw new Error('Stop the server before turning mods on or off');
+    await modsLib.setModEnabled(this.serverDir(id), fileName, enabled);
+    if (enabled) {
+      // Turning a mod back on is the host's call; stop flagging it as auto-disabled.
+      const config = this.readConfig(id);
+      const issues = (config.modIssues || []).map((i) => (i.fileName === fileName ? { ...i, autoDisabled: false } : i));
+      await this.updateConfig(id, { modIssues: issues });
+    }
+    this.emit('mods', id);
   }
 
   scheduleCrashRestart(id) {
