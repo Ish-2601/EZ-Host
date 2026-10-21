@@ -1,6 +1,6 @@
 {
   "name": "ez-host",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "EZ Host: host Minecraft and Project Zomboid servers on your own PC so friends can join from anywhere.",
   "main": "src/main/main.js",
   "private": true,
