@@ -1,0 +1,22 @@
+name: Suggest an idea
+description: Something you'd like EZ Host to do, or do better
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: game
+    attributes:
+      label: Which game is it about?
+      options: [Minecraft, Project Zomboid, Both, Something else]
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the problem you're trying to solve, not only the solution you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else? Screenshots, examples from other apps, how often you'd use it
