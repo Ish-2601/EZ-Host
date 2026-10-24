@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
-const USER_AGENT = 'Ish-2601/EZ-Host/0.2.1 (github.com/Ish-2601/Self-Host-MC)';
+const USER_AGENT = 'Ish-2601/EZ-Host/0.2.2 (github.com/Ish-2601/Self-Host-MC)';
 
 async function request(url, options = {}) {
   const res = await fetch(url, {

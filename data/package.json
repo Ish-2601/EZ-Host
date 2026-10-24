@@ -1,6 +1,6 @@
 {
   "name": "ez-host",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "EZ Host: host Minecraft and Project Zomboid servers on your own PC so friends can join from anywhere.",
   "main": "src/main/main.js",
   "private": true,
@@ -8,7 +8,8 @@
     "start": "electron .",
     "dist": "electron-builder --win nsis",
     "make-icon": "electron scripts/make-icon.js",
-    "test:engine": "node scripts/engine-smoke.js"
+    "test:engine": "node scripts/engine-smoke.js",
+    "make-installer-art": "electron scripts/make-installer-art.js"
   },
   "author": "Ish-2601",
   "license": "MIT",
@@ -37,7 +38,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -47,7 +48,16 @@
       "createStartMenuShortcut": true,
       "shortcutName": "EZ Host",
       "deleteAppDataOnUninstall": false,
-      "artifactName": "EZ-Host-Setup-${version}.${ext}"
+      "artifactName": "EZ-Host-Setup-${version}.${ext}",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "include": "build/installer.nsh",
+      "runAfterFinish": true,
+      "displayLanguageSelector": false
     },
     "asarUnpack": [
       "src/engine/map-worker.js",

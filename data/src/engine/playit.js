@@ -105,7 +105,7 @@ class Playit extends EventEmitter {
         if (Date.now() > deadline) throw new PlayitError('Linking timed out. Press "Connect playit.gg" to try again.');
         let setup;
         try {
-          setup = await api('/claim/setup', { code, agent_type: 'self-managed', version: 'EZ Host 0.2.1' });
+          setup = await api('/claim/setup', { code, agent_type: 'self-managed', version: 'EZ Host 0.2.2' });
         } catch (err) {
           if (err.status === 'fail') throw new PlayitError(`Linking failed: ${err.data}`);
           await sleep(3000);
