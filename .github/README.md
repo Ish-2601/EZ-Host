@@ -29,7 +29,7 @@ That's it. Java, mod loaders, the Zomboid dedicated server and everything else d
 
 > **"Windows protected your PC"?** Windows shows this for any new app that doesn't have a paid code-signing certificate yet, and EZ Host is free and open source, so it doesn't. It doesn't mean something is wrong. Click **More info**, then **Run anyway**.
 >
-> Want to check the file first? The release lists a SHA-256 checksum for each download. In PowerShell, run `Get-FileHash .EZ-Host-Setup-<version>.exe` and compare it with the release page. All of the code is in this repo, and you can build the installer yourself (see [Build from source](#build-from-source)).
+> Want to check the file first? The release lists a SHA-256 checksum for each download. In PowerShell, run `Get-FileHash EZ-Host-Setup-<version>.exe` and compare it with the release page. All of the code is in this repo, and you can build the installer yourself (see [Build from source](#build-from-source)).
 
 The release also has an **`EZ-Host-portable-<version>.zip`**. Unzip it anywhere and run `EZ Host.exe` if you'd rather not install anything.
 
