@@ -1,0 +1,33 @@
+name: Something went wrong
+description: A bug, a crash, or something that confused you
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: EZ Host version
+      description: Shown in the installer file name, e.g. 0.2.2
+    validations:
+      required: true
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options: [Minecraft, Project Zomboid, Both, Not game related]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can I make it happen again?
+  - type: textarea
+    id: console
+    attributes:
+      label: Console text or a screenshot
+      description: The server's Console tab often says what went wrong. Remove anything private first.

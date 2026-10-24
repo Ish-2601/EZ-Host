@@ -1,0 +1,40 @@
+name: Beta tester report
+description: Tell us how your test of EZ Host went (good or bad)
+labels: [beta-test]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: EZ Host version
+    validations:
+      required: true
+  - type: dropdown
+    id: game
+    attributes:
+      label: Which game did you host?
+      options: [Minecraft, Project Zomboid, Both]
+    validations:
+      required: true
+  - type: checkboxes
+    id: done
+    attributes:
+      label: What did you manage to do?
+      options:
+        - label: Installed it from the Release page
+        - label: Created a server
+        - label: Started the server and joined it myself
+        - label: A friend joined from another network
+        - label: Stopped the server and started it again
+  - type: textarea
+    id: notes
+    attributes:
+      label: How did it go? What was confusing or broken?
+    validations:
+      required: true
+  - type: dropdown
+    id: quote
+    attributes:
+      label: May we quote your comment (with your GitHub name) in the project's documentation?
+      options: ["Yes", "No"]
+    validations:
+      required: true

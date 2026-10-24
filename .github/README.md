@@ -119,6 +119,14 @@ npm run test:engine
 
 See [ROADMAP.md](../data/ROADMAP.md) for what comes next.
 
+## Code signing policy
+
+Windows shows a warning for installers without a code-signing certificate. EZ Host is applying for free code signing for open-source projects from [SignPath.io](https://signpath.io), with the certificate provided by the [SignPath Foundation](https://signpath.org). Until that is approved, the installer is unsigned, and every release lists SHA-256 checksums so you can check your download.
+
+- **How releases are built:** the installer is built by the [GitHub Actions workflow](workflows/build.yml) in this repository, straight from the source code here.
+- **Who can approve a signing:** only the project owner, [@Ish-2601](https://github.com/Ish-2601).
+- **Privacy:** see the [privacy policy](PRIVACY.md). EZ Host sends no data to the maintainer.
+
 ## Licence and credits
 
 - EZ Host is released under the [MIT licence](../data/LICENSE).

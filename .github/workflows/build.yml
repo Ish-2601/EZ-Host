@@ -1,0 +1,58 @@
+name: Build installer
+
+# Builds the Windows installer and portable zip on GitHub, straight from the
+# source in this repository, so the files people download can be traced to the code.
+# Run it by pushing a tag like v0.2.2, or from the Actions tab ("Run workflow").
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: data/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the installer
+        run: npm run dist
+
+      - name: Make the portable zip and checksums
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          Rename-Item dist/win-unpacked "EZ Host"
+          Compress-Archive -Path "dist/EZ Host" -DestinationPath "dist/EZ-Host-portable-$v.zip"
+          Rename-Item "dist/EZ Host" win-unpacked
+          Get-FileHash "dist/EZ-Host-Setup-$v.exe", "dist/EZ-Host-portable-$v.zip" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower()) *$(Split-Path $_.Path -Leaf)" } | Set-Content dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+
+      # The installer is unsigned until the project is approved for SignPath Foundation's
+      # free signing. When it is, a SignPath step goes here: it takes this artifact and
+      # returns the signed installer, so the signed file always comes from this build.
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EZ-Host-installer
+          path: |
+            data/dist/EZ-Host-Setup-*.exe
+            data/dist/EZ-Host-portable-*.zip
+            data/dist/SHA256SUMS.txt
+          if-no-files-found: error
