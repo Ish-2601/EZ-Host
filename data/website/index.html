@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EZ Host: host Minecraft and Project Zomboid servers on your own PC</title>
+  <meta name="description" content="EZ Host is a free Windows app that runs Minecraft and Project Zomboid servers on your own PC, so friends can join from anywhere. No commands, no router settings." />
+  <meta property="og:title" content="EZ Host" />
+  <meta property="og:description" content="Host Minecraft and Project Zomboid servers on your own PC, so friends can join from anywhere." />
+  <meta property="og:image" content="https://ish-2601.github.io/Self-Host-MC/img/server.png" />
+  <meta name="theme-color" content="#050607" />
+  <link rel="icon" href="favicon.ico" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#top" aria-label="EZ Host home"><img src="img/logo.svg" alt="" width="34" height="34" /><span>EZH</span></a>
+    <nav>
+      <a href="#games">Games</a>
+      <a href="#features">Features</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/Ish-2601/Self-Host-MC" rel="noopener">GitHub</a>
+      <a class="btn small" href="https://github.com/Ish-2601/Self-Host-MC/releases/latest" rel="noopener">Download</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-text">
+        <p class="label">Free · Open source · Windows 10 and 11</p>
+        <h1>Host game servers on your own PC.</h1>
+        <p class="lead">EZ Host sets up and runs <strong>Minecraft</strong> and <strong>Project Zomboid</strong> servers for you, and gives your friends an address to join from anywhere. No commands, no router settings, no monthly bill.</p>
+        <div class="cta">
+          <a id="download" class="btn big" href="https://github.com/Ish-2601/Self-Host-MC/releases/latest" rel="noopener">Download for Windows</a>
+          <span id="download-note" class="note">Free installer</span>
+        </div>
+        <p class="fine">Windows may say "Windows protected your PC" because the installer isn't code-signed yet. Click <b>More info</b>, then <b>Run anyway</b>. <a href="#signing">Why?</a></p>
+      </div>
+      <div class="hero-art"><img src="img/server.png" alt="EZ Host showing a running Minecraft server" /></div>
+    </section>
+
+    <section class="steps" aria-label="How it works">
+      <div><span class="n">01</span><h3>Install</h3><p>Download the installer and double-click it. Java, mod loaders and game servers download by themselves.</p></div>
+      <div><span class="n">02</span><h3>Pick a game</h3><p>Choose a modpack or a world preset. EZ Host does the setup and starts the server.</p></div>
+      <div><span class="n">03</span><h3>Share the address</h3><p>Connect the free playit.gg link once. Send friends the address and they join.</p></div>
+    </section>
+
+    <section id="games">
+      <p class="label">Supported games</p>
+      <h2>Two games, each with its own tools</h2>
+      <div class="grid two">
+        <article class="panel">
+          <h3>Minecraft: Java Edition</h3>
+          <p>Fabric, Forge, NeoForge, Quilt, Paper and plain vanilla. Host the profile you already play from CurseForge, Modrinth App or Prism, or pick any Modrinth modpack or <code>.mrpack</code> file.</p>
+          <ul>
+            <li>Players, whitelist, OP, inventories with in-game item pictures</li>
+            <li>Live world map with chunk force-loading, and world pregeneration</li>
+            <li>Mods list with conflict checks; client-only mods left out automatically</li>
+            <li>Backups, schedules and automatic restarts</li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h3>Project Zomboid (Build 42)</h3>
+          <p>A dedicated server installed through Steam without a login. Start from the game's world presets, copy a server you host in game, and add your Steam Workshop collections.</p>
+          <ul>
+            <li>Every server option and world rule, including the ones your mods add</li>
+            <li>The in-game map with players, plus item, vehicle and skill tools</li>
+            <li>Whitelist accounts, admin powers, world actions and mod-update restarts</li>
+            <li>Starts that survive deleted Workshop mods and Steam hiccups</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="features">
+      <p class="label">Features</p>
+      <h2>Made to be easy</h2>
+      <div class="grid three">
+        <article class="panel"><h3>Friends join from anywhere</h3><p>Every server gets its own online address through playit.gg. The app shows exactly what friends need to type.</p></article>
+        <article class="panel"><h3>It says what's wrong</h3><p>Startup progress, plain-language errors, and automatic retries instead of a wall of log text.</p></article>
+        <article class="panel"><h3>Right-click everything</h3><p>Players, servers and mods all have right-click menus, so common jobs are one click.</p></article>
+        <article class="panel"><h3>Memory suggestions</h3><p>EZ Host suggests how much memory a server needs from its mods and player count.</p></article>
+        <article class="panel"><h3>Make it yours</h3><p>Three themes, your choice of accent colour, panel style, background, spacing and a status strip.</p></article>
+        <article class="panel"><h3>Your files stay yours</h3><p>Servers live on your PC, and uninstalling keeps them. The app sends no data to anyone. <a href="https://github.com/Ish-2601/Self-Host-MC/blob/main/.github/PRIVACY.md" rel="noopener">Privacy policy</a></p></article>
+      </div>
+    </section>
+
+    <section class="shots">
+      <p class="label">A look inside</p>
+      <div class="grid two">
+        <figure class="panel"><img src="img/zomboid-map.png" alt="The Project Zomboid map with players" loading="lazy" /><figcaption>The in-game Zomboid map, with players</figcaption></figure>
+        <figure class="panel"><img src="img/zomboid-players.png" alt="Editing a Project Zomboid player" loading="lazy" /><figcaption>Give items, add skill XP, spawn vehicles</figcaption></figure>
+      </div>
+    </section>
+
+    <section id="faq">
+      <p class="label">FAQ</p>
+      <h2>Questions</h2>
+      <details><summary>Is it really free?</summary><p>Yes. EZ Host is free and open source (MIT licence). playit.gg's free plan gives every server an address. Your friends still need to own the game.</p></details>
+      <details><summary>Does my PC need to stay on?</summary><p>Yes. The server runs on your PC, so friends can play while EZ Host is open and the server is started.</p></details>
+      <details><summary>Where are my servers stored?</summary><p>In <code>%APPDATA%\self-host-mc\data</code>. Uninstalling keeps them.</p></details>
+      <details><summary>How much memory should I give a server?</summary><p>EZ Host suggests an amount from your mods and players. A few mods need about 4 GB. Big modpacks, or Zomboid with hundreds of mods, need 8 to 12 GB.</p></details>
+      <details><summary>My friend can't connect.</summary><p>Open the server's Friends' setup tab. It shows the exact address and port, the game version and the mods they need.</p></details>
+      <details><summary>Zomboid says playit.gg needs a verified email.</summary><p>playit.gg only gives UDP addresses (which Zomboid uses) to accounts with a verified email. Verify it on playit.gg and press Try again.</p></details>
+      <details id="signing"><summary>Why does Windows warn me about the installer?</summary><p>Windows warns about any new installer that doesn't have a paid code-signing certificate. EZ Host is free and open source, so it doesn't yet. EZ Host is applying for free code signing for open-source projects from <a href="https://signpath.io" rel="noopener">SignPath.io</a>, with a certificate from the <a href="https://signpath.org" rel="noopener">SignPath Foundation</a>. Until then, every release lists SHA-256 checksums you can check, and all of the code is on <a href="https://github.com/Ish-2601/Self-Host-MC" rel="noopener">GitHub</a>. Read the <a href="https://github.com/Ish-2601/Self-Host-MC#code-signing-policy" rel="noopener">code signing policy</a>.</p></details>
+    </section>
+
+    <section class="final">
+      <h2>Ready to host?</h2>
+      <a class="btn big" href="https://github.com/Ish-2601/Self-Host-MC/releases/latest" rel="noopener">Download for Windows</a>
+    </section>
+  </main>
+
+  <footer>
+    <p>EZ Host is free software under the <a href="https://github.com/Ish-2601/Self-Host-MC/blob/main/data/LICENSE" rel="noopener">MIT licence</a>. <a href="https://github.com/Ish-2601/Self-Host-MC" rel="noopener">Source code</a> · <a href="https://github.com/Ish-2601/Self-Host-MC/issues" rel="noopener">Report a problem</a> · <a href="https://github.com/Ish-2601/Self-Host-MC/blob/main/.github/PRIVACY.md" rel="noopener">Privacy</a></p>
+    <p class="fine">Not affiliated with Mojang, Microsoft, The Indie Stone, Valve or playit.gg. Minecraft and Project Zomboid are trademarks of their owners.</p>
+  </footer>
+
+  <script src="site.js"></script>
+</body>
+</html>
