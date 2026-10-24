@@ -4,7 +4,7 @@
   const button = document.getElementById('download');
   const note = document.getElementById('download-note');
   if (!button || !window.fetch) return;
-  fetch('https://api.github.com/repos/Ish-2601/Self-Host-MC/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+  fetch('https://api.github.com/repos/Ish-2601/EZ-Host/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
     .then((r) => (r.ok ? r.json() : Promise.reject()))
     .then((release) => {
       const installer = (release.assets || []).find((a) => /^EZ-Host-Setup-.*\.exe$/i.test(a.name));

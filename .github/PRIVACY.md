@@ -14,4 +14,4 @@ The app only contacts other services when you ask it to, and only for what that 
 
 Your servers, settings and files stay on your PC, in `%APPDATA%\self-host-mc`. Uninstalling EZ Host keeps them.
 
-Questions: open an issue at https://github.com/Ish-2601/Self-Host-MC/issues.
+Questions: open an issue at https://github.com/Ish-2601/EZ-Host/issues.

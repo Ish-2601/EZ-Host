@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Ish-2601/Self-Host-MC/releases/latest"><img src="https://img.shields.io/badge/Download%20for%20Windows-EZ%20Host%20installer-ff7a1a?style=for-the-badge&logo=windows&logoColor=white" alt="Download EZ Host for Windows" /></a>
+  <a href="https://github.com/Ish-2601/EZ-Host/releases/latest"><img src="https://img.shields.io/badge/Download%20for%20Windows-EZ%20Host%20installer-ff7a1a?style=for-the-badge&logo=windows&logoColor=white" alt="Download EZ Host for Windows" /></a>
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 ## Download and install
 
-1. Open the **[latest release](https://github.com/Ish-2601/Self-Host-MC/releases/latest)**.
+1. Open the **[latest release](https://github.com/Ish-2601/EZ-Host/releases/latest)**.
 2. Download **`EZ-Host-Setup-<version>.exe`**, the first file in the list.
 3. Double-click it and follow the steps. EZ Host gets a desktop shortcut and a Start menu entry.
 

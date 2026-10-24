@@ -4,7 +4,7 @@ Thank you for testing. About 30 to 45 minutes is plenty, and you don't need to f
 
 ## Before you start
 - Windows 10 or 11, and the game you'll host (Minecraft Java Edition and/or Project Zomboid).
-- Get the installer from the [latest release](https://github.com/Ish-2601/Self-Host-MC/releases/latest). Windows may warn "Windows protected your PC" because the installer isn't signed yet; that's expected. Click **More info**, then **Run anyway**.
+- Get the installer from the [latest release](https://github.com/Ish-2601/EZ-Host/releases/latest). Windows may warn "Windows protected your PC" because the installer isn't signed yet; that's expected. Click **More info**, then **Run anyway**.
 
 ## What to try
 1. Install it, open it, and go through the quick tour.
@@ -15,7 +15,7 @@ Thank you for testing. About 30 to 45 minutes is plenty, and you don't need to f
 6. Stop the server and start it again. Close the app and open it again.
 
 ## What to tell us
-Open one issue per test using the **Beta tester report** form: [new report](https://github.com/Ish-2601/Self-Host-MC/issues/new/choose). Say what worked, what didn't, and what confused you. For problems, use **Something went wrong** and paste the Console text.
+Open one issue per test using the **Beta tester report** form: [new report](https://github.com/Ish-2601/EZ-Host/issues/new/choose). Say what worked, what didn't, and what confused you. For problems, use **Something went wrong** and paste the Console text.
 
 ---
 
